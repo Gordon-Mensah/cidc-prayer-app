@@ -7,7 +7,7 @@ export const APP_CONFIG = {
   // ── Church Information ──────────────────────────────────────
   churchName: 'CIDC Budapest',
   churchFullName: 'Candle In The Dark Church Budapest',
-  // churchTagline: 'A community of faith, prayer, and fellowship',
+  churchTagline: 'A community of faith, prayer, and fellowship',
   
   // ── Contact Information ─────────────────────────────────────
   churchEmail: 'info@cidcbudapest.com',
