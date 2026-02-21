@@ -62,8 +62,14 @@ interface FollowUpTask {
   notes: string | null; completed: boolean; created_at: string
   church_members: ChurchMember; users: Shepherd
 }
+// ── NEW: Pending Users type ───────────────────────────────────────────────────
+interface PendingUser {
+  id: string; email: string; name: string
+  requested_role: string; notes: string | null
+  status: string; created_at: string
+}
 
-type Tab = 'prayers' | 'basonta' | 'firsttimers' | 'members' | 'shepherding' | 'announcements'
+type Tab = 'prayers' | 'basonta' | 'firsttimers' | 'members' | 'shepherding' | 'announcements' | 'pending'
 
 export default function LeaderDashboard() {
   const [user, setUser] = useState<any>(null)
@@ -106,6 +112,10 @@ export default function LeaderDashboard() {
   // Announcements
   const [announcements, setAnnouncements] = useState<Announcement[]>([])
 
+  // ── NEW: Pending Users state ──────────────────────────────────────────────────
+  const [pendingUsers, setPendingUsers] = useState<PendingUser[]>([])
+  const [pendingCount, setPendingCount] = useState(0)
+
   const [loading, setLoading] = useState(true)
 
   useEffect(() => { checkUser() }, [])
@@ -115,6 +125,12 @@ export default function LeaderDashboard() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
     setUser(user)
+    // Load pending count for the badge on the tab
+    const { count } = await supabase
+      .from('pending_users')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'pending')
+    setPendingCount(count || 0)
   }
 
   const loadTabData = async () => {
@@ -125,6 +141,7 @@ export default function LeaderDashboard() {
     else if (activeTab === 'members') await loadMembers()
     else if (activeTab === 'shepherding') await loadShepherding()
     else if (activeTab === 'announcements') await loadAnnouncements()
+    else if (activeTab === 'pending') await loadPendingUsers()  // ── NEW
     setLoading(false)
   }
 
@@ -204,11 +221,23 @@ export default function LeaderDashboard() {
     const { data: shepherdData } = await supabase.from('users').select('id, name, email').eq('role', 'shepherd')
     setShepherds(shepherdData || [])
     const { data: membersData } = await supabase.from('church_members').select('*').order('name')
-    setMembers(membersData || [])  }
+    setMembers(membersData || [])
+  }
 
   const loadAnnouncements = async () => {
     const { data } = await supabase.from('announcements').select('*').order('created_at', { ascending: false })
     setAnnouncements(data || [])
+  }
+
+  // ── NEW: Load pending users ───────────────────────────────────────────────────
+  const loadPendingUsers = async () => {
+    const { data } = await supabase
+      .from('pending_users')
+      .select('*')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: true })
+    setPendingUsers(data || [])
+    setPendingCount(data?.length || 0)
   }
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
@@ -295,7 +324,36 @@ export default function LeaderDashboard() {
     loadAnnouncements()
   }
 
-  const handleLogout = async () => { await supabase.auth.signOut(); router.push('/login') }
+  // ── NEW: Approve / Reject pending user ────────────────────────────────────────
+  const handleApproveUser = async (pending: PendingUser) => {
+    if (!confirm(`Approve ${pending.name} as ${pending.requested_role.replace(/_/g, ' ')}?`)) return
+    try {
+      const { error: userError } = await supabase
+        .from('users')
+        .insert([{ email: pending.email, name: pending.name, role: pending.requested_role }])
+      if (userError) {
+        // User row already exists — just update the role
+        await supabase.from('users').update({ role: pending.requested_role, name: pending.name }).eq('email', pending.email)
+      }
+      await supabase.from('pending_users').update({ status: 'approved' }).eq('id', pending.id)
+      alert(`${pending.name} has been approved. They can now log in.`)
+      loadPendingUsers()
+    } catch (err: any) {
+      alert(`Error approving user: ${err.message}`)
+    }
+  }
+
+  const handleRejectUser = async (pending: PendingUser) => {
+    if (!confirm(`Reject ${pending.name}'s request?`)) return
+    await supabase.from('pending_users').update({ status: 'rejected' }).eq('id', pending.id)
+    alert(`${pending.name}'s request has been rejected.`)
+    loadPendingUsers()
+  }
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut()
+    window.location.href = '/login'
+  }
 
   const getCategoryColor = (category: string) => {
     const colors: Record<string, string> = {
@@ -309,13 +367,14 @@ export default function LeaderDashboard() {
 
   // ── Tab config ────────────────────────────────────────────────────────────────
 
-  const tabs: { id: Tab; label: string }[] = [
+  const tabs: { id: Tab; label: string; badge?: number }[] = [
     { id: 'prayers', label: 'Prayer Requests' },
     { id: 'basonta', label: 'Basonta' },
     { id: 'firsttimers', label: 'First Timers' },
     { id: 'members', label: 'Church Members' },
     { id: 'shepherding', label: 'Shepherding' },
     { id: 'announcements', label: 'Announcements' },
+    { id: 'pending', label: 'Pending Users', badge: pendingCount },  // ── NEW
   ]
 
   // ── Render ────────────────────────────────────────────────────────────────────
@@ -345,13 +404,19 @@ export default function LeaderDashboard() {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`py-4 px-5 border-b-2 font-semibold text-sm whitespace-nowrap transition-colors ${
+                className={`relative py-4 px-5 border-b-2 font-semibold text-sm whitespace-nowrap transition-colors ${
                   activeTab === tab.id
                     ? 'border-slate-800 text-slate-800'
                     : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
                 }`}
               >
                 {tab.label}
+                {/* ── NEW: red badge for pending count ── */}
+                {tab.badge && tab.badge > 0 ? (
+                  <span className="ml-2 inline-flex items-center justify-center w-5 h-5 bg-red-500 text-white text-xs font-bold rounded-full">
+                    {tab.badge}
+                  </span>
+                ) : null}
               </button>
             ))}
           </div>
@@ -594,7 +659,6 @@ export default function LeaderDashboard() {
                   </div>
                 </div>
 
-                {/* Assignments */}
                 <div className="mb-10">
                   <h3 className="text-lg font-serif font-bold text-slate-800 mb-5">Current Assignments</h3>
                   <div className="space-y-3">
@@ -618,7 +682,6 @@ export default function LeaderDashboard() {
                   </div>
                 </div>
 
-                {/* Follow-Ups */}
                 <div>
                   <h3 className="text-lg font-serif font-bold text-slate-800 mb-5">Follow-Up Tasks</h3>
                   <div className="space-y-3">
@@ -684,6 +747,72 @@ export default function LeaderDashboard() {
                 ) : (
                   <div className="text-center py-16 bg-slate-50 rounded-lg border-2 border-slate-200">
                     <p className="text-slate-500 text-lg">No announcements yet</p>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* ══ NEW: PENDING USERS TAB ════════════════════════════════════════════ */}
+            {activeTab === 'pending' && (
+              <>
+                <div className="flex justify-between items-center mb-8">
+                  <div>
+                    <h2 className="text-2xl font-serif font-bold text-slate-800">Pending User Requests</h2>
+                    <p className="text-slate-500 text-sm mt-1">Review and approve new staff access requests</p>
+                  </div>
+                </div>
+
+                {pendingUsers.length > 0 ? (
+                  <div className="space-y-4">
+                    {pendingUsers.map(pending => (
+                      <div key={pending.id} className="bg-white rounded-lg border-2 border-amber-200 p-6 hover:border-amber-300 transition-all">
+                        <div className="flex justify-between items-start flex-wrap gap-4">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-3 mb-2 flex-wrap">
+                              <h3 className="font-bold text-slate-800 text-lg">{pending.name}</h3>
+                              <span className="px-3 py-1 bg-amber-100 text-amber-800 border border-amber-200 rounded text-xs font-semibold uppercase tracking-wide">Pending</span>
+                              <span className="px-3 py-1 bg-slate-100 text-slate-700 border border-slate-200 rounded text-xs font-semibold uppercase tracking-wide">
+                                {pending.requested_role.replace(/_/g, ' ')}
+                              </span>
+                            </div>
+                            <p className="text-slate-600 text-sm">{pending.email}</p>
+                            <p className="text-xs text-slate-400 mt-1">
+                              Requested {new Date(pending.created_at).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                            </p>
+                            {pending.notes && (
+                              <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Notes from applicant</p>
+                                <p className="text-sm text-slate-700 italic">{pending.notes}</p>
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            <button
+                              onClick={() => handleApproveUser(pending)}
+                              className="px-6 py-2.5 bg-green-700 text-white rounded-lg hover:bg-green-800 font-semibold text-sm transition-all shadow-md"
+                            >
+                              Approve
+                            </button>
+                            <button
+                              onClick={() => handleRejectUser(pending)}
+                              className="px-6 py-2.5 border-2 border-red-200 text-red-600 rounded-lg hover:bg-red-50 font-semibold text-sm transition-all"
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-16 bg-slate-50 rounded-lg border-2 border-slate-200">
+                    <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <svg className="w-8 h-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    </div>
+                    <p className="text-slate-500 text-lg">No pending requests</p>
+                    <p className="text-slate-400 text-sm mt-1">New signup requests will appear here</p>
                   </div>
                 )}
               </>
