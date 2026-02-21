@@ -49,7 +49,7 @@ export default function WarriorDashboard() {
           method: 'GET',
           headers: {
             'apikey': process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`,
+            'Authorization': `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ''}`,
             'Accept': 'application/json',
           },
         }

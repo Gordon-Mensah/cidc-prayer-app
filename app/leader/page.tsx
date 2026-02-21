@@ -203,9 +203,8 @@ export default function LeaderDashboard() {
     setFollowUps(followData || [])
     const { data: shepherdData } = await supabase.from('users').select('id, name, email').eq('role', 'shepherd')
     setShepherds(shepherdData || [])
-    const { data: membersData } = await supabase.from('church_members').select('id, name').order('name')
-    setMembers(membersData || [])
-  }
+    const { data: membersData } = await supabase.from('church_members').select('*').order('name')
+    setMembers(membersData || [])  }
 
   const loadAnnouncements = async () => {
     const { data } = await supabase.from('announcements').select('*').order('created_at', { ascending: false })
