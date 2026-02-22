@@ -53,11 +53,23 @@ interface FollowUpReport {
   church_members: ChurchMember
 }
 
+// ── NEW: First Timer type ─────────────────────────────────────────────────────
+interface FirstTimer {
+  id: string
+  name: string
+  phone: string | null
+  visit_date: string
+  source: string
+  notes: string | null
+  converted: boolean
+  created_at: string
+}
+
 export default function ShepherdDashboard() {
   const [user, setUser] = useState<any>(null)
-  const [activeTab, setActiveTab] = useState<'sheep' | 'followups'>('sheep')
+  const [activeTab, setActiveTab] = useState<'sheep' | 'followups' | 'firsttimers'>('sheep')
 
-  // My Sheep
+  // Sheep Assignment
   const [assignments, setAssignments] = useState<ShepherdingAssignment[]>([])
   const [selectedSheep, setSelectedSheep] = useState<ShepherdingAssignment | null>(null)
   const [sheepReports, setSheepReports] = useState<ShepherdingReport[]>([])
@@ -71,16 +83,23 @@ export default function ShepherdDashboard() {
   const [showFollowUpReportModal, setShowFollowUpReportModal] = useState(false)
   const [followUpReportForm, setFollowUpReportForm] = useState({ content: '', report_date: new Date().toISOString().split('T')[0] })
 
+  // ── NEW: First Timers state ───────────────────────────────────────────────────
+  const [firstTimers, setFirstTimers] = useState<FirstTimer[]>([])
+  const [showAddFirstTimer, setShowAddFirstTimer] = useState(false)
+  const [firstTimerForm, setFirstTimerForm] = useState({
+    name: '',
+    phone: '',
+    visit_date: new Date().toISOString().split('T')[0],
+    source: 'manual',
+    notes: ''
+  })
+  const [addingFirstTimer, setAddingFirstTimer] = useState(false)
+
   const [loading, setLoading] = useState(true)
   const router = useRouter()
 
-  useEffect(() => {
-    checkUser()
-  }, [])
-
-  useEffect(() => {
-    if (user) loadTabData()
-  }, [user, activeTab])
+  useEffect(() => { checkUser() }, [])
+  useEffect(() => { if (user) loadTabData() }, [user, activeTab])
 
   const checkUser = async () => {
     const { data: { user } } = await supabase.auth.getUser()
@@ -91,7 +110,8 @@ export default function ShepherdDashboard() {
   const loadTabData = async () => {
     setLoading(true)
     if (activeTab === 'sheep') await loadAssignments()
-    else await loadFollowUps()
+    else if (activeTab === 'followups') await loadFollowUps()
+    else if (activeTab === 'firsttimers') await loadFirstTimers()
     setLoading(false)
   }
 
@@ -111,6 +131,15 @@ export default function ShepherdDashboard() {
       .eq('shepherd_id', user.id)
       .order('due_date', { ascending: true })
     setFollowUps(data || [])
+  }
+
+  // ── NEW: Load all first timers (read-only) ────────────────────────────────────
+  const loadFirstTimers = async () => {
+    const { data } = await supabase
+      .from('first_timers')
+      .select('*')
+      .order('visit_date', { ascending: false })
+    setFirstTimers(data || [])
   }
 
   const loadSheepReports = async (assignmentId: string) => {
@@ -164,7 +193,6 @@ export default function ShepherdDashboard() {
       report_date: followUpReportForm.report_date,
       content: followUpReportForm.content.trim()
     }])
-    // Mark task complete
     await supabase.from('follow_up_tasks').update({ completed: true }).eq('id', selectedFollowUp.id)
     setFollowUpReportForm({ content: '', report_date: new Date().toISOString().split('T')[0] })
     setShowFollowUpReportModal(false)
@@ -172,9 +200,33 @@ export default function ShepherdDashboard() {
     await loadFollowUps()
   }
 
+  // ── NEW: Add first timer (insert only, no delete/edit) ────────────────────────
+  const handleAddFirstTimer = async () => {
+    if (!firstTimerForm.name.trim()) return
+    setAddingFirstTimer(true)
+    await supabase.from('first_timers').insert([{
+      name: firstTimerForm.name.trim(),
+      phone: firstTimerForm.phone || null,
+      visit_date: firstTimerForm.visit_date,
+      source: firstTimerForm.source,
+      notes: firstTimerForm.notes || null,
+      converted: false
+    }])
+    setFirstTimerForm({
+      name: '',
+      phone: '',
+      visit_date: new Date().toISOString().split('T')[0],
+      source: 'manual',
+      notes: ''
+    })
+    setAddingFirstTimer(false)
+    setShowAddFirstTimer(false)
+    await loadFirstTimers()
+  }
+
   const handleLogout = async () => {
     await supabase.auth.signOut()
-    router.push('/login')
+    window.location.href = '/login'
   }
 
   return (
@@ -196,12 +248,16 @@ export default function ShepherdDashboard() {
 
       {/* Tabs */}
       <div className="bg-white border-b-2 border-slate-200">
-        <div className="max-w-7xl mx-auto px-4 flex">
-          {[{ id: 'sheep' as const, label: 'My Sheep' }, { id: 'followups' as const, label: 'Follow-Ups' }].map(tab => (
+        <div className="max-w-7xl mx-auto px-4 flex overflow-x-auto">
+          {[
+            { id: 'sheep' as const, label: 'Sheep Assignment' },
+            { id: 'followups' as const, label: 'Follow-Ups' },
+            { id: 'firsttimers' as const, label: 'First Timers' },  // ── NEW
+          ].map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`py-4 px-6 border-b-2 font-semibold text-sm transition-colors ${
+              className={`py-4 px-6 border-b-2 font-semibold text-sm whitespace-nowrap transition-colors ${
                 activeTab === tab.id ? 'border-slate-800 text-slate-800' : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
               }`}
             >
@@ -219,11 +275,11 @@ export default function ShepherdDashboard() {
           </div>
         ) : (
           <>
-            {/* ══ MY SHEEP TAB ══════════════════════════════════════════════════ */}
+            {/* ══ SHEEP ASSIGNMENT TAB ══════════════════════════════════════════════ */}
             {activeTab === 'sheep' && (
               <>
                 <div className="mb-8">
-                  <h2 className="text-2xl font-serif font-bold text-slate-800">My Sheep</h2>
+                  <h2 className="text-2xl font-serif font-bold text-slate-800">Sheep Assignment</h2>
                   <p className="text-slate-500 text-sm mt-1">Members assigned to your care &mdash; {assignments.length} {assignments.length === 1 ? 'member' : 'members'}</p>
                 </div>
 
@@ -251,7 +307,7 @@ export default function ShepherdDashboard() {
               </>
             )}
 
-            {/* ══ FOLLOW-UPS TAB ════════════════════════════════════════════════ */}
+            {/* ══ FOLLOW-UPS TAB ════════════════════════════════════════════════════ */}
             {activeTab === 'followups' && (
               <>
                 <div className="mb-8">
@@ -259,7 +315,6 @@ export default function ShepherdDashboard() {
                   <p className="text-slate-500 text-sm mt-1">Tasks assigned by the leader &mdash; reports are private between you and the leader</p>
                 </div>
 
-                {/* Pending */}
                 <div className="mb-10">
                   <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-widest mb-4">Pending</h3>
                   <div className="space-y-4">
@@ -290,7 +345,6 @@ export default function ShepherdDashboard() {
                   </div>
                 </div>
 
-                {/* Completed */}
                 {followUps.filter(f => f.completed).length > 0 && (
                   <div>
                     <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-widest mb-4">Completed</h3>
@@ -314,6 +368,55 @@ export default function ShepherdDashboard() {
                     </div>
                   </div>
                 )}
+              </>
+            )}
+
+            {/* ══ NEW: FIRST TIMERS TAB ═════════════════════════════════════════════ */}
+            {activeTab === 'firsttimers' && (
+              <>
+                <div className="flex justify-between items-center mb-8">
+                  <div>
+                    <h2 className="text-2xl font-serif font-bold text-slate-800">First Timers</h2>
+                    <p className="text-slate-500 text-sm mt-1">View and record new visitors — {firstTimers.length} total</p>
+                  </div>
+                  <button
+                    onClick={() => setShowAddFirstTimer(true)}
+                    className="px-6 py-3 bg-slate-800 text-white rounded-lg font-semibold hover:bg-slate-700 transition-all shadow-lg text-sm"
+                  >
+                    Add First Timer
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  {firstTimers.map(ft => (
+                    <div key={ft.id} className={`bg-white rounded-lg border-2 p-5 transition-all ${ft.converted ? 'border-green-200 opacity-70' : 'border-slate-200'}`}>
+                      <div className="flex items-start gap-4">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-1 flex-wrap">
+                            <h3 className="font-bold text-slate-800 text-lg">{ft.name}</h3>
+                            {ft.converted && (
+                              <span className="px-2 py-0.5 bg-green-100 text-green-700 border border-green-200 rounded text-xs font-semibold uppercase tracking-wide">Member</span>
+                            )}
+                            <span className="px-2 py-0.5 bg-slate-100 text-slate-600 border border-slate-200 rounded text-xs font-semibold uppercase tracking-wide">{ft.source}</span>
+                          </div>
+                          {ft.phone && <p className="text-sm text-slate-500">{ft.phone}</p>}
+                          <p className="text-xs text-slate-400 mt-1">
+                            Visited: {new Date(ft.visit_date).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                          </p>
+                          {ft.notes && <p className="text-sm text-slate-600 mt-2 italic">{ft.notes}</p>}
+                        </div>
+                        {/* ── No edit/remove buttons — view only ── */}
+                      </div>
+                    </div>
+                  ))}
+
+                  {firstTimers.length === 0 && (
+                    <div className="text-center py-16 bg-slate-50 rounded-lg border-2 border-slate-200">
+                      <p className="text-slate-500 text-lg">No first timers recorded yet</p>
+                      <p className="text-slate-400 text-sm mt-1">Use the button above to add a new visitor</p>
+                    </div>
+                  )}
+                </div>
               </>
             )}
           </>
@@ -349,14 +452,10 @@ export default function ShepherdDashboard() {
               </div>
             )}
 
-            {/* Reports */}
             <div className="mb-6">
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-widest">Shepherding Reports</h3>
-                <button
-                  onClick={() => setShowReportModal(true)}
-                  className="px-4 py-2 bg-slate-800 text-white rounded-lg font-semibold hover:bg-slate-700 transition-all text-sm"
-                >
+                <button onClick={() => setShowReportModal(true)} className="px-4 py-2 bg-slate-800 text-white rounded-lg font-semibold hover:bg-slate-700 transition-all text-sm">
                   Add Report
                 </button>
               </div>
@@ -392,43 +491,19 @@ export default function ShepherdDashboard() {
           <div className="bg-white rounded-lg border-2 border-slate-200 max-w-lg w-full p-8 shadow-2xl">
             <h2 className="text-2xl font-serif font-bold text-slate-800 mb-1">Add Shepherding Report</h2>
             <p className="text-slate-500 text-sm mb-8">For: <span className="font-semibold text-slate-700">{selectedSheep.church_members.name}</span></p>
-
             <div className="space-y-5">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Report Date</label>
-                <input
-                  type="date"
-                  value={reportForm.report_date}
-                  onChange={e => setReportForm({ ...reportForm, report_date: e.target.value })}
-                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors"
-                />
+                <input type="date" value={reportForm.report_date} onChange={e => setReportForm({ ...reportForm, report_date: e.target.value })} className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors" />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Report</label>
-                <textarea
-                  value={reportForm.content}
-                  onChange={e => setReportForm({ ...reportForm, content: e.target.value })}
-                  placeholder="Describe your interaction, observations, and any prayer needs..."
-                  rows={6}
-                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 placeholder-slate-400 bg-white resize-none transition-colors"
-                />
+                <textarea value={reportForm.content} onChange={e => setReportForm({ ...reportForm, content: e.target.value })} placeholder="Describe your interaction, observations, and any prayer needs..." rows={6} className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 placeholder-slate-400 bg-white resize-none transition-colors" />
               </div>
             </div>
-
             <div className="flex gap-3 mt-8">
-              <button
-                onClick={handleSubmitSheepReport}
-                disabled={!reportForm.content.trim()}
-                className="flex-1 bg-slate-800 text-white py-3 rounded-lg font-semibold hover:bg-slate-700 transition-all disabled:bg-slate-300 disabled:cursor-not-allowed"
-              >
-                Submit Report
-              </button>
-              <button
-                onClick={() => { setShowReportModal(false); setReportForm({ content: '', report_date: new Date().toISOString().split('T')[0] }) }}
-                className="px-6 py-3 border-2 border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 font-semibold transition-all"
-              >
-                Cancel
-              </button>
+              <button onClick={handleSubmitSheepReport} disabled={!reportForm.content.trim()} className="flex-1 bg-slate-800 text-white py-3 rounded-lg font-semibold hover:bg-slate-700 transition-all disabled:bg-slate-300 disabled:cursor-not-allowed">Submit Report</button>
+              <button onClick={() => { setShowReportModal(false); setReportForm({ content: '', report_date: new Date().toISOString().split('T')[0] }) }} className="px-6 py-3 border-2 border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 font-semibold transition-all">Cancel</button>
             </div>
           </div>
         </div>
@@ -463,14 +538,11 @@ export default function ShepherdDashboard() {
               <p className="text-xs text-amber-700 font-semibold">Reports are private &mdash; visible only to you and the church leader</p>
             </div>
 
-            {/* Follow-Up Reports */}
             <div className="mb-6 mt-5">
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-widest">Reports</h3>
                 {!selectedFollowUp.completed && (
-                  <button onClick={() => setShowFollowUpReportModal(true)} className="px-4 py-2 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-all text-sm">
-                    Submit Report
-                  </button>
+                  <button onClick={() => setShowFollowUpReportModal(true)} className="px-4 py-2 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-all text-sm">Submit Report</button>
                 )}
               </div>
 
@@ -492,9 +564,7 @@ export default function ShepherdDashboard() {
               )}
             </div>
 
-            <button onClick={() => { setSelectedFollowUp(null); setFollowUpReports([]) }} className="w-full py-3 border-2 border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 font-semibold transition-all">
-              Close
-            </button>
+            <button onClick={() => { setSelectedFollowUp(null); setFollowUpReports([]) }} className="w-full py-3 border-2 border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 font-semibold transition-all">Close</button>
           </div>
         </div>
       )}
@@ -505,42 +575,98 @@ export default function ShepherdDashboard() {
           <div className="bg-white rounded-lg border-2 border-slate-200 max-w-lg w-full p-8 shadow-2xl">
             <h2 className="text-2xl font-serif font-bold text-slate-800 mb-1">Submit Follow-Up Report</h2>
             <p className="text-slate-500 text-sm mb-2">For: <span className="font-semibold text-slate-700">{selectedFollowUp.church_members.name}</span></p>
-            <p className="text-xs text-amber-700 font-semibold mb-8 p-2 bg-amber-50 border border-amber-200 rounded-lg">
-              This report will only be visible to you and the church leader
-            </p>
-
+            <p className="text-xs text-amber-700 font-semibold mb-8 p-2 bg-amber-50 border border-amber-200 rounded-lg">This report will only be visible to you and the church leader</p>
             <div className="space-y-5">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Report Date</label>
+                <input type="date" value={followUpReportForm.report_date} onChange={e => setFollowUpReportForm({ ...followUpReportForm, report_date: e.target.value })} className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Report</label>
+                <textarea value={followUpReportForm.content} onChange={e => setFollowUpReportForm({ ...followUpReportForm, content: e.target.value })} placeholder="Describe the follow-up: what was discussed, how the member is doing, any prayer needs or concerns..." rows={6} className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 placeholder-slate-400 bg-white resize-none transition-colors" />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-8">
+              <button onClick={handleSubmitFollowUpReport} disabled={!followUpReportForm.content.trim()} className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-all disabled:bg-slate-300 disabled:cursor-not-allowed">Submit & Mark Complete</button>
+              <button onClick={() => { setShowFollowUpReportModal(false); setFollowUpReportForm({ content: '', report_date: new Date().toISOString().split('T')[0] }) }} className="px-6 py-3 border-2 border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 font-semibold transition-all">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── NEW: Add First Timer Modal ── */}
+      {showAddFirstTimer && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg border-2 border-slate-200 max-w-md w-full p-8 shadow-2xl">
+            <h2 className="text-2xl font-serif font-bold text-slate-800 mb-2">Add First Timer</h2>
+            <p className="text-slate-500 text-sm mb-8">Record a new visitor to the church</p>
+            <div className="space-y-5">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Full Name</label>
+                <input
+                  type="text"
+                  value={firstTimerForm.name}
+                  onChange={e => setFirstTimerForm({ ...firstTimerForm, name: e.target.value })}
+                  placeholder="Visitor's full name"
+                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 placeholder-slate-400 transition-colors"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Phone <span className="text-slate-400 font-normal normal-case">(optional)</span></label>
+                <input
+                  type="tel"
+                  value={firstTimerForm.phone}
+                  onChange={e => setFirstTimerForm({ ...firstTimerForm, phone: e.target.value })}
+                  placeholder="+1234567890"
+                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 placeholder-slate-400 transition-colors"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Visit Date</label>
                 <input
                   type="date"
-                  value={followUpReportForm.report_date}
-                  onChange={e => setFollowUpReportForm({ ...followUpReportForm, report_date: e.target.value })}
+                  value={firstTimerForm.visit_date}
+                  onChange={e => setFirstTimerForm({ ...firstTimerForm, visit_date: e.target.value })}
                   className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors"
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Report</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Source</label>
+                <select
+                  value={firstTimerForm.source}
+                  onChange={e => setFirstTimerForm({ ...firstTimerForm, source: e.target.value })}
+                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors"
+                >
+                  <option value="manual">Manual Entry</option>
+                  <option value="basonta">Basonta Meeting</option>
+                  <option value="service">Sunday Service</option>
+                  <option value="event">Church Event</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Notes <span className="text-slate-400 font-normal normal-case">(optional)</span></label>
                 <textarea
-                  value={followUpReportForm.content}
-                  onChange={e => setFollowUpReportForm({ ...followUpReportForm, content: e.target.value })}
-                  placeholder="Describe the follow-up: what was discussed, how the member is doing, any prayer needs or concerns..."
-                  rows={6}
+                  value={firstTimerForm.notes}
+                  onChange={e => setFirstTimerForm({ ...firstTimerForm, notes: e.target.value })}
+                  placeholder="Any notes about the visitor..."
+                  rows={3}
                   className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 placeholder-slate-400 bg-white resize-none transition-colors"
                 />
               </div>
             </div>
-
             <div className="flex gap-3 mt-8">
               <button
-                onClick={handleSubmitFollowUpReport}
-                disabled={!followUpReportForm.content.trim()}
-                className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-all disabled:bg-slate-300 disabled:cursor-not-allowed"
+                onClick={handleAddFirstTimer}
+                disabled={!firstTimerForm.name.trim() || addingFirstTimer}
+                className="flex-1 bg-slate-800 text-white py-3 rounded-lg font-semibold hover:bg-slate-700 transition-all disabled:bg-slate-300 disabled:cursor-not-allowed"
               >
-                Submit & Mark Complete
+                {addingFirstTimer ? 'Saving...' : 'Add First Timer'}
               </button>
               <button
-                onClick={() => { setShowFollowUpReportModal(false); setFollowUpReportForm({ content: '', report_date: new Date().toISOString().split('T')[0] }) }}
+                onClick={() => {
+                  setShowAddFirstTimer(false)
+                  setFirstTimerForm({ name: '', phone: '', visit_date: new Date().toISOString().split('T')[0], source: 'manual', notes: '' })
+                }}
                 className="px-6 py-3 border-2 border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 font-semibold transition-all"
               >
                 Cancel

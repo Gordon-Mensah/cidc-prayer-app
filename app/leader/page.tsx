@@ -34,6 +34,7 @@ interface BasontaMeeting {
 interface GroupWithStats extends BasontaGroup {
   totalMeetings: number; avgAttendance: number; totalFirstTimers: number
   totalTestimonies: number; memberCount: number; lastMeetingDate: string | null
+  leader_id: string
 }
 interface Announcement {
   id: string; title: string; description: string; category: string
@@ -62,7 +63,6 @@ interface FollowUpTask {
   notes: string | null; completed: boolean; created_at: string
   church_members: ChurchMember; users: Shepherd
 }
-// ── NEW: Pending Users type ───────────────────────────────────────────────────
 interface PendingUser {
   id: string; email: string; name: string
   requested_role: string; notes: string | null
@@ -70,6 +70,8 @@ interface PendingUser {
 }
 
 type Tab = 'prayers' | 'basonta' | 'firsttimers' | 'members' | 'shepherding' | 'announcements' | 'pending'
+
+const PRAYER_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
 export default function LeaderDashboard() {
   const [user, setUser] = useState<any>(null)
@@ -89,6 +91,13 @@ export default function LeaderDashboard() {
   const [selectedGroup, setSelectedGroup] = useState<GroupWithStats | null>(null)
   const [groupMeetings, setGroupMeetings] = useState<BasontaMeeting[]>([])
   const [basontaStats, setBasontaStats] = useState({ totalGroups: 0, totalMeetings: 0, totalFirstTimers: 0, totalTestimonies: 0, avgAttendanceRate: 0, mostActiveGroup: '' })
+  // ── NEW: Basonta management state
+  const [showCreateGroup, setShowCreateGroup] = useState(false)
+  const [showReassignLeader, setShowReassignLeader] = useState(false)
+  const [reassignTarget, setReassignTarget] = useState<GroupWithStats | null>(null)
+  const [basontaShepherds, setBasontaShepherds] = useState<Shepherd[]>([])
+  const [createGroupForm, setCreateGroupForm] = useState({ name: '', prayer_day: 'Monday', prayer_time: '', leader_id: '' })
+  const [reassignLeaderId, setReassignLeaderId] = useState('')
 
   // First Timers
   const [firstTimers, setFirstTimers] = useState<FirstTimer[]>([])
@@ -112,7 +121,7 @@ export default function LeaderDashboard() {
   // Announcements
   const [announcements, setAnnouncements] = useState<Announcement[]>([])
 
-  // ── NEW: Pending Users state ──────────────────────────────────────────────────
+  // Pending Users
   const [pendingUsers, setPendingUsers] = useState<PendingUser[]>([])
   const [pendingCount, setPendingCount] = useState(0)
 
@@ -125,11 +134,7 @@ export default function LeaderDashboard() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
     setUser(user)
-    // Load pending count for the badge on the tab
-    const { count } = await supabase
-      .from('pending_users')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'pending')
+    const { count } = await supabase.from('pending_users').select('*', { count: 'exact', head: true }).eq('status', 'pending')
     setPendingCount(count || 0)
   }
 
@@ -141,7 +146,7 @@ export default function LeaderDashboard() {
     else if (activeTab === 'members') await loadMembers()
     else if (activeTab === 'shepherding') await loadShepherding()
     else if (activeTab === 'announcements') await loadAnnouncements()
-    else if (activeTab === 'pending') await loadPendingUsers()  // ── NEW
+    else if (activeTab === 'pending') await loadPendingUsers()
     setLoading(false)
   }
 
@@ -172,7 +177,7 @@ export default function LeaderDashboard() {
   }
 
   const loadBasontaData = async () => {
-    const { data: groupsData } = await supabase.from('basonta_groups').select('*, users (name, email)').order('name')
+    const { data: groupsData } = await supabase.from('basonta_groups').select('*, users (id, name, email)').order('name')
     const { data: meetingsData } = await supabase.from('basonta_meetings').select('*, basonta_groups (name)').order('meeting_date', { ascending: false })
     setAllMeetings(meetingsData || [])
     const groupsWithStats: GroupWithStats[] = []
@@ -181,6 +186,7 @@ export default function LeaderDashboard() {
       const { count: memberCount } = await supabase.from('basonta_members').select('*', { count: 'exact', head: true }).eq('group_id', group.id)
       groupsWithStats.push({
         ...group,
+        leader_id: group.leader_id || '',
         totalMeetings: gm.length,
         avgAttendance: gm.length > 0 ? gm.reduce((s, m) => s + m.people_present, 0) / gm.length : 0,
         totalFirstTimers: gm.reduce((s, m) => s + (m.first_timers || 0), 0),
@@ -190,6 +196,9 @@ export default function LeaderDashboard() {
       })
     }
     setBasontaGroups(groupsWithStats)
+    // Load shepherds eligible to lead a Basonta group
+    const { data: shepherdData } = await supabase.from('users').select('id, name, email').in('role', ['shepherd', 'basonta_shepherd', 'leader'])
+    setBasontaShepherds(shepherdData || [])
     const mostActive = groupsWithStats.reduce((max, g) => g.totalMeetings > max.totalMeetings ? g : max, groupsWithStats[0] || { totalMeetings: 0, name: 'N/A' })
     setBasontaStats({
       totalGroups: groupsWithStats.length,
@@ -229,13 +238,8 @@ export default function LeaderDashboard() {
     setAnnouncements(data || [])
   }
 
-  // ── NEW: Load pending users ───────────────────────────────────────────────────
   const loadPendingUsers = async () => {
-    const { data } = await supabase
-      .from('pending_users')
-      .select('*')
-      .eq('status', 'pending')
-      .order('created_at', { ascending: true })
+    const { data } = await supabase.from('pending_users').select('*').eq('status', 'pending').order('created_at', { ascending: true })
     setPendingUsers(data || [])
     setPendingCount(data?.length || 0)
   }
@@ -263,6 +267,49 @@ export default function LeaderDashboard() {
     setSelectedGroup(group)
     const { data } = await supabase.from('basonta_meetings').select('*').eq('group_id', group.id).order('meeting_date', { ascending: false })
     setGroupMeetings(data || [])
+  }
+
+  // ── NEW: Create Basonta Group ─────────────────────────────────────────────────
+  const handleCreateGroup = async () => {
+    if (!createGroupForm.name.trim() || !createGroupForm.leader_id) return
+    try {
+      const { error } = await supabase.from('basonta_groups').insert([{
+        name: createGroupForm.name.trim(),
+        prayer_day: createGroupForm.prayer_day,
+        prayer_time: createGroupForm.prayer_time || null,
+        leader_id: createGroupForm.leader_id,
+      }])
+      if (error) throw error
+      // Also update the assigned user's role to basonta_shepherd if they're just a shepherd
+      const leader = basontaShepherds.find(s => s.id === createGroupForm.leader_id)
+      if (leader) {
+        await supabase.from('users').update({ role: 'basonta_shepherd' }).eq('id', createGroupForm.leader_id).in('role', ['shepherd'])
+      }
+      setCreateGroupForm({ name: '', prayer_day: 'Monday', prayer_time: '', leader_id: '' })
+      setShowCreateGroup(false)
+      alert(`Basonta group "${createGroupForm.name.trim()}" created successfully!`)
+      loadBasontaData()
+    } catch (err: any) {
+      alert(`Error creating group: ${err.message}`)
+    }
+  }
+
+  // ── NEW: Reassign Basonta Group Leader ────────────────────────────────────────
+  const handleReassignLeader = async () => {
+    if (!reassignTarget || !reassignLeaderId) return
+    try {
+      const { error } = await supabase.from('basonta_groups').update({ leader_id: reassignLeaderId }).eq('id', reassignTarget.id)
+      if (error) throw error
+      // Promote new leader to basonta_shepherd if needed
+      await supabase.from('users').update({ role: 'basonta_shepherd' }).eq('id', reassignLeaderId).in('role', ['shepherd'])
+      setReassignTarget(null)
+      setReassignLeaderId('')
+      setShowReassignLeader(false)
+      alert('Group leader updated successfully!')
+      loadBasontaData()
+    } catch (err: any) {
+      alert(`Error reassigning leader: ${err.message}`)
+    }
   }
 
   const handleAddFirstTimer = async () => {
@@ -324,15 +371,11 @@ export default function LeaderDashboard() {
     loadAnnouncements()
   }
 
-  // ── NEW: Approve / Reject pending user ────────────────────────────────────────
   const handleApproveUser = async (pending: PendingUser) => {
     if (!confirm(`Approve ${pending.name} as ${pending.requested_role.replace(/_/g, ' ')}?`)) return
     try {
-      const { error: userError } = await supabase
-        .from('users')
-        .insert([{ email: pending.email, name: pending.name, role: pending.requested_role }])
+      const { error: userError } = await supabase.from('users').insert([{ email: pending.email, name: pending.name, role: pending.requested_role }])
       if (userError) {
-        // User row already exists — just update the role
         await supabase.from('users').update({ role: pending.requested_role, name: pending.name }).eq('email', pending.email)
       }
       await supabase.from('pending_users').update({ status: 'approved' }).eq('id', pending.id)
@@ -365,8 +408,6 @@ export default function LeaderDashboard() {
     return colors[category] || 'bg-gray-100 text-gray-800 border-gray-200'
   }
 
-  // ── Tab config ────────────────────────────────────────────────────────────────
-
   const tabs: { id: Tab; label: string; badge?: number }[] = [
     { id: 'prayers', label: 'Prayer Requests' },
     { id: 'basonta', label: 'Basonta' },
@@ -374,10 +415,8 @@ export default function LeaderDashboard() {
     { id: 'members', label: 'Church Members' },
     { id: 'shepherding', label: 'Shepherding' },
     { id: 'announcements', label: 'Announcements' },
-    { id: 'pending', label: 'Pending Users', badge: pendingCount },  // ── NEW
+    { id: 'pending', label: 'Pending Users', badge: pendingCount },
   ]
-
-  // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen bg-white">
@@ -411,7 +450,6 @@ export default function LeaderDashboard() {
                 }`}
               >
                 {tab.label}
-                {/* ── NEW: red badge for pending count ── */}
                 {tab.badge && tab.badge > 0 ? (
                   <span className="ml-2 inline-flex items-center justify-center w-5 h-5 bg-red-500 text-white text-xs font-bold rounded-full">
                     {tab.badge}
@@ -448,7 +486,6 @@ export default function LeaderDashboard() {
                     </div>
                   ))}
                 </div>
-
                 <div className="flex gap-3 mb-6">
                   {(['all', 'active', 'answered'] as const).map(f => (
                     <button key={f} onClick={() => setFilter(f)}
@@ -457,7 +494,6 @@ export default function LeaderDashboard() {
                     </button>
                   ))}
                 </div>
-
                 <div className="space-y-4">
                   {requests.map(request => (
                     <div key={request.id} className="bg-white rounded-lg border-2 border-slate-200 p-6 hover:border-slate-300 hover:shadow-lg transition-all">
@@ -496,7 +532,8 @@ export default function LeaderDashboard() {
             {/* ══ BASONTA TAB ══════════════════════════════════════════════════════ */}
             {activeTab === 'basonta' && (
               <>
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-10">
+                {/* Stats */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
                   {[
                     { label: 'Groups', value: basontaStats.totalGroups },
                     { label: 'Meetings', value: basontaStats.totalMeetings },
@@ -510,12 +547,24 @@ export default function LeaderDashboard() {
                   ))}
                 </div>
 
+                {/* ── NEW: Action buttons ── */}
+                <div className="flex justify-between items-center mb-6">
+                  <h2 className="text-xl font-serif font-bold text-slate-800">Basontas</h2>
+                  <button
+                    onClick={() => setShowCreateGroup(true)}
+                    className="px-6 py-3 bg-slate-800 text-white rounded-lg font-semibold hover:bg-slate-700 transition-all shadow-lg text-sm"
+                  >
+                    + Create New Basonta
+                  </button>
+                </div>
+
+                {/* Groups grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
                   {basontaGroups.map(group => (
                     <div key={group.id} className="bg-white rounded-lg border-2 border-slate-200 p-6 hover:border-slate-300 hover:shadow-xl transition-all">
                       <h3 className="text-lg font-bold text-slate-800">{group.name}</h3>
                       <p className="text-sm text-slate-500 mt-1">Leader: {group.users.name}</p>
-                      <p className="text-xs text-slate-400 mt-0.5">{group.prayer_day}s at {group.prayer_time}</p>
+                      <p className="text-xs text-slate-400 mt-0.5">{group.prayer_day}s{group.prayer_time ? ` at ${group.prayer_time}` : ''}</p>
                       <div className="grid grid-cols-2 gap-3 mt-4 mb-4">
                         {[{ v: group.memberCount, l: 'Members', c: 'bg-blue-50 text-blue-800 border-blue-100' }, { v: group.totalMeetings, l: 'Meetings', c: 'bg-green-50 text-green-800 border-green-100' }, { v: group.totalFirstTimers, l: 'First Timers', c: 'bg-purple-50 text-purple-800 border-purple-100' }, { v: group.totalTestimonies, l: 'Testimonies', c: 'bg-orange-50 text-orange-800 border-orange-100' }].map(s => (
                           <div key={s.l} className={`text-center p-2 rounded-lg border ${s.c}`}>
@@ -524,11 +573,28 @@ export default function LeaderDashboard() {
                           </div>
                         ))}
                       </div>
-                      <button onClick={() => handleViewGroup(group)} className="w-full bg-slate-800 text-white py-2.5 rounded-lg font-semibold hover:bg-slate-700 transition-all text-sm">View Details</button>
+                      <div className="flex gap-2">
+                        <button onClick={() => handleViewGroup(group)} className="flex-1 bg-slate-800 text-white py-2.5 rounded-lg font-semibold hover:bg-slate-700 transition-all text-sm">View Details</button>
+                        {/* ── NEW: Reassign leader button ── */}
+                        <button
+                          onClick={() => { setReassignTarget(group); setReassignLeaderId(''); setShowReassignLeader(true) }}
+                          className="px-3 py-2.5 border-2 border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 font-semibold text-xs transition-all"
+                          title="Change group leader"
+                        >
+                          Change Leader
+                        </button>
+                      </div>
                     </div>
                   ))}
+                  {basontaGroups.length === 0 && (
+                    <div className="col-span-3 text-center py-16 bg-slate-50 rounded-lg border-2 border-slate-200">
+                      <p className="text-slate-500 text-lg">No Basontas yet</p>
+                      <p className="text-slate-400 text-sm mt-1">Create your first Basonta using the button above</p>
+                    </div>
+                  )}
                 </div>
 
+                {/* Recent meetings */}
                 <div className="bg-white rounded-lg border-2 border-slate-200 p-8">
                   <h2 className="text-2xl font-serif font-bold text-slate-800 mb-6">Recent Meetings</h2>
                   {allMeetings.slice(0, 10).map(meeting => (
@@ -545,6 +611,9 @@ export default function LeaderDashboard() {
                       </div>
                     </div>
                   ))}
+                  {allMeetings.length === 0 && (
+                    <p className="text-slate-400 text-center py-8">No meetings recorded yet</p>
+                  )}
                 </div>
               </>
             )}
@@ -557,11 +626,8 @@ export default function LeaderDashboard() {
                     <h2 className="text-2xl font-serif font-bold text-slate-800">First Timers</h2>
                     <p className="text-slate-500 text-sm mt-1">Track and follow up with new visitors</p>
                   </div>
-                  <button onClick={() => setShowAddFirstTimer(true)} className="px-6 py-3 bg-slate-800 text-white rounded-lg font-semibold hover:bg-slate-700 transition-all shadow-lg">
-                    Add First Timer
-                  </button>
+                  <button onClick={() => setShowAddFirstTimer(true)} className="px-6 py-3 bg-slate-800 text-white rounded-lg font-semibold hover:bg-slate-700 transition-all shadow-lg">Add First Timer</button>
                 </div>
-
                 <div className="space-y-3">
                   {firstTimers.map(ft => (
                     <div key={ft.id} className={`bg-white rounded-lg border-2 p-5 hover:shadow-lg transition-all ${ft.converted ? 'border-green-200 opacity-70' : 'border-slate-200 hover:border-slate-300'}`}>
@@ -577,14 +643,8 @@ export default function LeaderDashboard() {
                           {ft.notes && <p className="text-sm text-slate-600 mt-2 italic">{ft.notes}</p>}
                         </div>
                         <div className="flex gap-2 ml-4">
-                          {!ft.converted && (
-                            <button onClick={() => handlePromoteToMember(ft)} className="px-3 py-2 bg-green-700 text-white rounded-lg hover:bg-green-800 text-xs font-semibold transition-all">
-                              Add to Members
-                            </button>
-                          )}
-                          <button onClick={() => handleDeleteFirstTimer(ft.id)} className="px-3 py-2 border-2 border-red-200 text-red-600 rounded-lg hover:bg-red-50 text-xs font-semibold transition-all">
-                            Remove
-                          </button>
+                          {!ft.converted && <button onClick={() => handlePromoteToMember(ft)} className="px-3 py-2 bg-green-700 text-white rounded-lg hover:bg-green-800 text-xs font-semibold transition-all">Add to Members</button>}
+                          <button onClick={() => handleDeleteFirstTimer(ft.id)} className="px-3 py-2 border-2 border-red-200 text-red-600 rounded-lg hover:bg-red-50 text-xs font-semibold transition-all">Remove</button>
                         </div>
                       </div>
                     </div>
@@ -607,11 +667,8 @@ export default function LeaderDashboard() {
                     <h2 className="text-2xl font-serif font-bold text-slate-800">Church Members</h2>
                     <p className="text-slate-500 text-sm mt-1">{members.length} registered members</p>
                   </div>
-                  <button onClick={() => setShowAddMember(true)} className="px-6 py-3 bg-slate-800 text-white rounded-lg font-semibold hover:bg-slate-700 transition-all shadow-lg">
-                    Add Member
-                  </button>
+                  <button onClick={() => setShowAddMember(true)} className="px-6 py-3 bg-slate-800 text-white rounded-lg font-semibold hover:bg-slate-700 transition-all shadow-lg">Add Member</button>
                 </div>
-
                 <div className="space-y-3">
                   {members.map(member => (
                     <div key={member.id} className="bg-white rounded-lg border-2 border-slate-200 p-5 hover:border-slate-300 hover:shadow-lg transition-all">
@@ -620,15 +677,9 @@ export default function LeaderDashboard() {
                           <h3 className="font-bold text-slate-800 text-lg">{member.name}</h3>
                           {member.phone && <p className="text-sm text-slate-500 mt-0.5">{member.phone}</p>}
                           {member.address && <p className="text-sm text-slate-500 mt-0.5">{member.address}</p>}
-                          {member.shepherd && (
-                            <p className="text-xs text-slate-400 mt-2">
-                              Shepherd: <span className="font-semibold text-slate-600">{member.shepherd.name}</span>
-                            </p>
-                          )}
+                          {member.shepherd && <p className="text-xs text-slate-400 mt-2">Shepherd: <span className="font-semibold text-slate-600">{member.shepherd.name}</span></p>}
                         </div>
-                        <button onClick={() => handleDeleteMember(member.id)} className="px-3 py-2 border-2 border-red-200 text-red-600 rounded-lg hover:bg-red-50 text-xs font-semibold transition-all ml-4">
-                          Remove
-                        </button>
+                        <button onClick={() => handleDeleteMember(member.id)} className="px-3 py-2 border-2 border-red-200 text-red-600 rounded-lg hover:bg-red-50 text-xs font-semibold transition-all ml-4">Remove</button>
                       </div>
                     </div>
                   ))}
@@ -650,38 +701,24 @@ export default function LeaderDashboard() {
                     <p className="text-slate-500 text-sm mt-1">Assign members to shepherds and manage follow-ups</p>
                   </div>
                   <div className="flex gap-3">
-                    <button onClick={() => setShowAssignModal(true)} className="px-5 py-3 bg-slate-800 text-white rounded-lg font-semibold hover:bg-slate-700 transition-all shadow-lg text-sm">
-                      Assign Shepherd
-                    </button>
-                    <button onClick={() => setShowFollowUpModal(true)} className="px-5 py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-all shadow-lg text-sm">
-                      Assign Follow-Up
-                    </button>
+                    <button onClick={() => setShowAssignModal(true)} className="px-5 py-3 bg-slate-800 text-white rounded-lg font-semibold hover:bg-slate-700 transition-all shadow-lg text-sm">Assign Shepherd</button>
+                    <button onClick={() => setShowFollowUpModal(true)} className="px-5 py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-all shadow-lg text-sm">Assign Follow-Up</button>
                   </div>
                 </div>
-
                 <div className="mb-10">
                   <h3 className="text-lg font-serif font-bold text-slate-800 mb-5">Current Assignments</h3>
                   <div className="space-y-3">
                     {assignments.map(a => (
                       <div key={a.id} className="bg-white rounded-lg border-2 border-slate-200 p-5 hover:border-slate-300 transition-all">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <p className="font-bold text-slate-800">{a.church_members.name}</p>
-                            <p className="text-sm text-slate-500 mt-0.5">Shepherd: <span className="font-semibold text-slate-700">{a.users.name}</span></p>
-                            <p className="text-xs text-slate-400 mt-1">Assigned {new Date(a.assigned_at).toLocaleDateString()}</p>
-                            {a.notes && <p className="text-sm text-slate-600 mt-2 italic">{a.notes}</p>}
-                          </div>
-                        </div>
+                        <p className="font-bold text-slate-800">{a.church_members.name}</p>
+                        <p className="text-sm text-slate-500 mt-0.5">Shepherd: <span className="font-semibold text-slate-700">{a.users.name}</span></p>
+                        <p className="text-xs text-slate-400 mt-1">Assigned {new Date(a.assigned_at).toLocaleDateString()}</p>
+                        {a.notes && <p className="text-sm text-slate-600 mt-2 italic">{a.notes}</p>}
                       </div>
                     ))}
-                    {assignments.length === 0 && (
-                      <div className="text-center py-12 bg-slate-50 rounded-lg border-2 border-slate-200">
-                        <p className="text-slate-500">No shepherding assignments yet</p>
-                      </div>
-                    )}
+                    {assignments.length === 0 && <div className="text-center py-12 bg-slate-50 rounded-lg border-2 border-slate-200"><p className="text-slate-500">No shepherding assignments yet</p></div>}
                   </div>
                 </div>
-
                 <div>
                   <h3 className="text-lg font-serif font-bold text-slate-800 mb-5">Follow-Up Tasks</h3>
                   <div className="space-y-3">
@@ -698,11 +735,7 @@ export default function LeaderDashboard() {
                         </div>
                       </div>
                     ))}
-                    {followUps.length === 0 && (
-                      <div className="text-center py-12 bg-slate-50 rounded-lg border-2 border-slate-200">
-                        <p className="text-slate-500">No follow-up tasks assigned yet</p>
-                      </div>
-                    )}
+                    {followUps.length === 0 && <div className="text-center py-12 bg-slate-50 rounded-lg border-2 border-slate-200"><p className="text-slate-500">No follow-up tasks assigned yet</p></div>}
                   </div>
                 </div>
               </>
@@ -713,11 +746,8 @@ export default function LeaderDashboard() {
               <>
                 <div className="flex justify-between items-center mb-8">
                   <h2 className="text-2xl font-serif font-bold text-slate-800">Announcements</h2>
-                  <a href="/announcements/create" className="px-6 py-3 bg-slate-800 text-white rounded-lg font-semibold hover:bg-slate-700 transition-all shadow-lg text-sm">
-                    Create Announcement
-                  </a>
+                  <a href="/announcements/create" className="px-6 py-3 bg-slate-800 text-white rounded-lg font-semibold hover:bg-slate-700 transition-all shadow-lg text-sm">Create Announcement</a>
                 </div>
-
                 {announcements.length > 0 ? (
                   <div className="space-y-4">
                     {announcements.map(a => (
@@ -752,7 +782,7 @@ export default function LeaderDashboard() {
               </>
             )}
 
-            {/* ══ NEW: PENDING USERS TAB ════════════════════════════════════════════ */}
+            {/* ══ PENDING USERS TAB ════════════════════════════════════════════════ */}
             {activeTab === 'pending' && (
               <>
                 <div className="flex justify-between items-center mb-8">
@@ -761,7 +791,6 @@ export default function LeaderDashboard() {
                     <p className="text-slate-500 text-sm mt-1">Review and approve new staff access requests</p>
                   </div>
                 </div>
-
                 {pendingUsers.length > 0 ? (
                   <div className="space-y-4">
                     {pendingUsers.map(pending => (
@@ -771,14 +800,10 @@ export default function LeaderDashboard() {
                             <div className="flex items-center gap-3 mb-2 flex-wrap">
                               <h3 className="font-bold text-slate-800 text-lg">{pending.name}</h3>
                               <span className="px-3 py-1 bg-amber-100 text-amber-800 border border-amber-200 rounded text-xs font-semibold uppercase tracking-wide">Pending</span>
-                              <span className="px-3 py-1 bg-slate-100 text-slate-700 border border-slate-200 rounded text-xs font-semibold uppercase tracking-wide">
-                                {pending.requested_role.replace(/_/g, ' ')}
-                              </span>
+                              <span className="px-3 py-1 bg-slate-100 text-slate-700 border border-slate-200 rounded text-xs font-semibold uppercase tracking-wide">{pending.requested_role.replace(/_/g, ' ')}</span>
                             </div>
                             <p className="text-slate-600 text-sm">{pending.email}</p>
-                            <p className="text-xs text-slate-400 mt-1">
-                              Requested {new Date(pending.created_at).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-                            </p>
+                            <p className="text-xs text-slate-400 mt-1">Requested {new Date(pending.created_at).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
                             {pending.notes && (
                               <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-lg">
                                 <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Notes from applicant</p>
@@ -787,18 +812,8 @@ export default function LeaderDashboard() {
                             )}
                           </div>
                           <div className="flex flex-col gap-2">
-                            <button
-                              onClick={() => handleApproveUser(pending)}
-                              className="px-6 py-2.5 bg-green-700 text-white rounded-lg hover:bg-green-800 font-semibold text-sm transition-all shadow-md"
-                            >
-                              Approve
-                            </button>
-                            <button
-                              onClick={() => handleRejectUser(pending)}
-                              className="px-6 py-2.5 border-2 border-red-200 text-red-600 rounded-lg hover:bg-red-50 font-semibold text-sm transition-all"
-                            >
-                              Reject
-                            </button>
+                            <button onClick={() => handleApproveUser(pending)} className="px-6 py-2.5 bg-green-700 text-white rounded-lg hover:bg-green-800 font-semibold text-sm transition-all shadow-md">Approve</button>
+                            <button onClick={() => handleRejectUser(pending)} className="px-6 py-2.5 border-2 border-red-200 text-red-600 rounded-lg hover:bg-red-50 font-semibold text-sm transition-all">Reject</button>
                           </div>
                         </div>
                       </div>
@@ -879,14 +894,14 @@ export default function LeaderDashboard() {
         </div>
       )}
 
-      {/* ── Basonta Group Modal ── */}
+      {/* ── Basonta Group Detail Modal ── */}
       {selectedGroup && (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50 overflow-y-auto">
           <div className="bg-white rounded-lg border-2 border-slate-200 max-w-3xl w-full max-h-[90vh] overflow-y-auto p-8 shadow-2xl">
             <div className="flex justify-between items-start mb-6">
               <div>
                 <h2 className="text-2xl font-serif font-bold text-slate-800 mb-1">{selectedGroup.name}</h2>
-                <p className="text-slate-500 text-sm">Leader: {selectedGroup.users.name} &mdash; {selectedGroup.prayer_day}s at {selectedGroup.prayer_time}</p>
+                <p className="text-slate-500 text-sm">Leader: {selectedGroup.users.name} &mdash; {selectedGroup.prayer_day}s{selectedGroup.prayer_time ? ` at ${selectedGroup.prayer_time}` : ''}</p>
               </div>
               <button onClick={() => setSelectedGroup(null)} className="text-slate-400 hover:text-slate-700 text-2xl transition-colors">&times;</button>
             </div>
@@ -913,8 +928,111 @@ export default function LeaderDashboard() {
                   {m.comments && <p className="text-sm text-slate-600 mt-3 p-3 bg-white rounded-lg border border-slate-200">{m.comments}</p>}
                 </div>
               ))}
+              {groupMeetings.length === 0 && <p className="text-slate-400 text-center py-8">No meetings recorded for this group yet</p>}
             </div>
             <button onClick={() => setSelectedGroup(null)} className="w-full mt-6 py-3 border-2 border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 font-semibold transition-all">Close</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── NEW: Create Basonta Group Modal ── */}
+      {showCreateGroup && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg border-2 border-slate-200 max-w-md w-full p-8 shadow-2xl">
+            <h2 className="text-2xl font-serif font-bold text-slate-800 mb-2">Create Basonta</h2>
+            <p className="text-slate-500 text-sm mb-8">Set up a new Basonta and assign a shepherd to lead it</p>
+            <div className="space-y-5">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Group Name</label>
+                <input
+                  type="text"
+                  value={createGroupForm.name}
+                  onChange={e => setCreateGroupForm({ ...createGroupForm, name: e.target.value })}
+                  placeholder="e.g. Film Stars, Dancing Stars..."
+                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 placeholder-slate-400 transition-colors"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Prayer Day</label>
+                <select
+                  value={createGroupForm.prayer_day}
+                  onChange={e => setCreateGroupForm({ ...createGroupForm, prayer_day: e.target.value })}
+                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors"
+                >
+                  {PRAYER_DAYS.map(d => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">
+                  Prayer Time <span className="text-slate-400 font-normal normal-case">(optional)</span>
+                </label>
+                <input
+                  type="time"
+                  value={createGroupForm.prayer_time}
+                  onChange={e => setCreateGroupForm({ ...createGroupForm, prayer_time: e.target.value })}
+                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Assign Group Leader</label>
+                <select
+                  value={createGroupForm.leader_id}
+                  onChange={e => setCreateGroupForm({ ...createGroupForm, leader_id: e.target.value })}
+                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors"
+                >
+                  <option value="">Select a shepherd...</option>
+                  {basontaShepherds.map(s => (
+                    <option key={s.id} value={s.id}>{s.name} — {s.email}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-slate-400 mt-2">If the selected person is a Shepherd, their role will automatically be upgraded to Basonta Shepherd.</p>
+              </div>
+            </div>
+            <div className="flex gap-3 mt-8">
+              <button
+                onClick={handleCreateGroup}
+                disabled={!createGroupForm.name.trim() || !createGroupForm.leader_id}
+                className="flex-1 bg-slate-800 text-white py-3 rounded-lg font-semibold hover:bg-slate-700 transition-all disabled:bg-slate-300 disabled:cursor-not-allowed"
+              >
+                Create Group
+              </button>
+              <button onClick={() => setShowCreateGroup(false)} className="px-6 py-3 border-2 border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 font-semibold transition-all">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── NEW: Reassign Group Leader Modal ── */}
+      {showReassignLeader && reassignTarget && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg border-2 border-slate-200 max-w-md w-full p-8 shadow-2xl">
+            <h2 className="text-2xl font-serif font-bold text-slate-800 mb-2">Change Group Leader</h2>
+            <p className="text-slate-500 text-sm mb-1">Group: <span className="font-semibold text-slate-700">{reassignTarget.name}</span></p>
+            <p className="text-slate-500 text-sm mb-8">Current leader: <span className="font-semibold text-slate-700">{reassignTarget.users.name}</span></p>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">New Leader</label>
+              <select
+                value={reassignLeaderId}
+                onChange={e => setReassignLeaderId(e.target.value)}
+                className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors"
+              >
+                <option value="">Select a shepherd...</option>
+                {basontaShepherds.map(s => (
+                  <option key={s.id} value={s.id}>{s.name} — {s.email}</option>
+                ))}
+              </select>
+              <p className="text-xs text-slate-400 mt-2">If the selected person is a Shepherd, their role will automatically be upgraded to Basonta Shepherd.</p>
+            </div>
+            <div className="flex gap-3 mt-8">
+              <button
+                onClick={handleReassignLeader}
+                disabled={!reassignLeaderId}
+                className="flex-1 bg-slate-800 text-white py-3 rounded-lg font-semibold hover:bg-slate-700 transition-all disabled:bg-slate-300 disabled:cursor-not-allowed"
+              >
+                Confirm Change
+              </button>
+              <button onClick={() => { setShowReassignLeader(false); setReassignTarget(null) }} className="px-6 py-3 border-2 border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 font-semibold transition-all">Cancel</button>
+            </div>
           </div>
         </div>
       )}
