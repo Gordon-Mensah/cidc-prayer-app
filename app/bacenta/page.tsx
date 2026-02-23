@@ -3,913 +3,762 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import APP_CONFIG, { getChurchName, getPageTitle } from '@/lib/config'
 
-// All your type definitions remain the same - keeping them exactly as is
-interface PrayerRequest {
-  id: string; title: string; description: string; category: string
-  privacy_level: string; requester_name: string | null
-  requester_phone: string | null; requester_email: string | null
-  timeline: string | null; timeline_days: number | null
-  created_at: string; status: string
+interface BacentaMember {
+  id: string
+  name: string
+  phone: string | null
+  is_basonta_member: boolean
+  joined_at: string
 }
 
-interface Warrior { id: string; name: string; email: string }
-
-interface PrayerCommitment {
-  id: string; request_id: string; warrior_id: string
-  total_hours_target: number; hours_completed: number
-  deadline: string | null; completed: boolean; users: Warrior
+interface BacentaGroup {
+  id: string
+  name: string
+  location: string
+  meeting_day: string
+  meeting_time: string | null
+  created_at: string
 }
 
-interface RequestWithCommitments extends PrayerRequest {
-  commitments: PrayerCommitment[]; total_hours: number; warriors_count: number
+interface BacentaMeeting {
+  id: string
+  meeting_date: string
+  attendance: number
+  first_timers: number
+  converts: number
+  testimonies_count: number
+  attendance_coming_sunday: number
+  absent_but_coming_sunday: number
+  picture_url: string | null
+  comments: string | null
+  created_at: string
 }
 
-interface BasontaGroup {
-  id: string; name: string; prayer_day: string; prayer_time: string | null
-  created_at: string; users: { name: string; email: string }; leader_id: string
-}
-
-interface BasontaMeeting {
-  id: string; group_id: string; meeting_date: string; people_present: number
-  first_timers: number; testimonies_count: number; comments: string | null
-  created_at: string; basonta_groups: { name: string }
-}
-
-interface GroupWithStats extends BasontaGroup {
-  totalMeetings: number; avgAttendance: number; totalFirstTimers: number
-  totalTestimonies: number; memberCount: number; lastMeetingDate: string | null
-}
-
-interface Announcement {
-  id: string; title: string; description: string; category: string
-  flyer_url: string | null; event_date: string | null; expires_at: string | null
-  created_at: string; priority: number; is_active: boolean
-}
-
-interface FirstTimer {
-  id: string; name: string; phone: string | null; visit_date: string
-  source: string; notes: string | null; converted: boolean; created_at: string
-}
-
-interface ChurchMember {
-  id: string; name: string; phone: string | null; address: string | null
-  assigned_shepherd_id: string | null; created_at: string
-  shepherd?: { name: string; email: string } | null
-}
-
-interface Shepherd { id: string; name: string; email: string }
-
-interface ShepherdingAssignment {
-  id: string; member_id: string; shepherd_id: string
-  assigned_at: string; notes: string | null
-  church_members: ChurchMember; users: Shepherd
-}
-
-interface FollowUpTask {
-  id: string; member_id: string; shepherd_id: string; due_date: string | null
-  notes: string | null; completed: boolean; created_at: string
-  church_members: ChurchMember; users: Shepherd
-}
-
-type Tab = 'prayers' | 'basonta' | 'bacenta' | 'firsttimers' | 'members' | 'shepherding' | 'announcements'
-
-export default function LeaderDashboard() {
+export default function BacentaDashboard() {
   const [user, setUser] = useState<any>(null)
-  const [activeTab, setActiveTab] = useState<Tab>('prayers')
+  const [group, setGroup] = useState<BacentaGroup | null>(null)
+  const [members, setMembers] = useState<BacentaMember[]>([])
+  const [meetings, setMeetings] = useState<BacentaMeeting[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showAddMember, setShowAddMember] = useState(false)
+  const [showLogMeeting, setShowLogMeeting] = useState(false)
+  const [newMemberForm, setNewMemberForm] = useState({ name: '', phone: '', is_basonta_member: false })
+  const [uploading, setUploading] = useState(false)
+  const [pictureFile, setPictureFile] = useState<File | null>(null)
+  const [picturePreview, setPicturePreview] = useState<string | null>(null)
+
+  const [meetingForm, setMeetingForm] = useState({
+    date: new Date().toISOString().split('T')[0],
+    attendance: 0,
+    first_timers: 0,
+    converts: 0,
+    testimonies_count: 0,
+    attendance_coming_sunday: 0,
+    absent_but_coming_sunday: 0,
+    comments: ''
+  })
+
+  const [stats, setStats] = useState({
+    totalMembers: 0,
+    totalMeetings: 0,
+    avgAttendance: 0,
+    totalFirstTimers: 0,
+    totalConverts: 0,
+    totalTestimonies: 0,
+    basontaMembers: 0
+  })
+
   const router = useRouter()
 
-  // Prayer states
-  const [requests, setRequests] = useState<RequestWithCommitments[]>([])
-  const [warriors, setWarriors] = useState<Warrior[]>([])
-  const [selectedRequest, setSelectedRequest] = useState<RequestWithCommitments | null>(null)
-  const [prayerStats, setPrayerStats] = useState({ totalRequests: 0, totalHours: 0, activeWarriors: 0, answeredPrayers: 0 })
-  const [filter, setFilter] = useState<'all' | 'active' | 'answered'>('active')
-
-  // Basonta states
-  const [basontaGroups, setBasontaGroups] = useState<GroupWithStats[]>([])
-  const [allMeetings, setAllMeetings] = useState<BasontaMeeting[]>([])
-  const [selectedGroup, setSelectedGroup] = useState<GroupWithStats | null>(null)
-  const [groupMeetings, setGroupMeetings] = useState<BasontaMeeting[]>([])
-  const [basontaStats, setBasontaStats] = useState({ totalGroups: 0, totalMeetings: 0, totalFirstTimers: 0, totalTestimonies: 0, avgAttendanceRate: 0, mostActiveGroup: '' })
-
-  // First Timers states
-  const [firstTimers, setFirstTimers] = useState<FirstTimer[]>([])
-  const [showAddFirstTimer, setShowAddFirstTimer] = useState(false)
-  const [firstTimerForm, setFirstTimerForm] = useState({ name: '', phone: '', visit_date: new Date().toISOString().split('T')[0], source: 'manual', notes: '' })
-
-  // Church Members states
-  const [members, setMembers] = useState<ChurchMember[]>([])
-  const [showAddMember, setShowAddMember] = useState(false)
-  const [memberForm, setMemberForm] = useState({ name: '', phone: '', address: '' })
-  const [shepherds, setShepherds] = useState<Shepherd[]>([])
-
-  // Shepherding states
-  const [assignments, setAssignments] = useState<ShepherdingAssignment[]>([])
-  const [followUps, setFollowUps] = useState<FollowUpTask[]>([])
-  const [showAssignModal, setShowAssignModal] = useState(false)
-  const [showFollowUpModal, setShowFollowUpModal] = useState(false)
-  const [assignForm, setAssignForm] = useState({ member_id: '', shepherd_id: '', notes: '' })
-  const [followUpForm, setFollowUpForm] = useState({ member_id: '', shepherd_id: '', due_date: '', notes: '' })
-
-  // Announcements states
-  const [announcements, setAnnouncements] = useState<Announcement[]>([])
-
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => { checkUser() }, [])
-  useEffect(() => { loadTabData() }, [activeTab, filter])
+  useEffect(() => {
+    document.title = getPageTitle('Bacenta Dashboard')
+    checkUser()
+    loadData()
+  }, [])
 
   const checkUser = async () => {
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) { router.push('/login'); return }
+    if (!user) {
+      router.push('/login')
+      return
+    }
     setUser(user)
   }
 
-  const loadTabData = async () => {
-    setLoading(true)
-    if (activeTab === 'prayers') await loadPrayerData()
-    else if (activeTab === 'basonta') await loadBasontaData()
-    else if (activeTab === 'firsttimers') await loadFirstTimers()
-    else if (activeTab === 'members') await loadMembers()
-    else if (activeTab === 'shepherding') await loadShepherding()
-    else if (activeTab === 'announcements') await loadAnnouncements()
-    setLoading(false)
-  }
+  const loadData = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
 
-  const loadPrayerData = async () => {
-    let query = supabase.from('prayer_requests').select('*').order('created_at', { ascending: false })
-    if (filter === 'active') query = query.eq('status', 'active')
-    else if (filter === 'answered') query = query.eq('status', 'answered')
-    const { data: requestsData } = await query
-    const { data: commitmentsData } = await supabase.from('prayer_commitments').select('*, users (id, name, email)')
-    const { data: logsData } = await supabase.from('prayer_logs').select('*')
-    const requestsWithCommitments = requestsData?.map(r => ({
-      ...r,
-      commitments: commitmentsData?.filter(c => c.request_id === r.id) || [],
-      total_hours: logsData?.filter(l => l.request_id === r.id).reduce((s, l) => s + l.duration_minutes / 60, 0) || 0,
-      warriors_count: commitmentsData?.filter(c => c.request_id === r.id).length || 0
-    })) || []
-    setRequests(requestsWithCommitments)
-    const { data: warriorsData } = await supabase.from('users').select('id, name, email').in('role', ['warrior', 'leader'])
-    setWarriors(warriorsData || [])
-    setPrayerStats({
-      totalRequests: requestsData?.length || 0,
-      totalHours: logsData?.reduce((s, l) => s + l.duration_minutes / 60, 0) || 0,
-      activeWarriors: new Set(commitmentsData?.map(c => c.warrior_id)).size,
-      answeredPrayers: requestsData?.filter(r => r.status === 'answered').length || 0
-    })
-  }
+      const { data: groupData } = await supabase
+        .from('bacenta_groups')
+        .select('*')
+        .eq('leader_id', user.id)
+        .single()
 
-  const loadBasontaData = async () => {
-    const { data: groupsData } = await supabase.from('basonta_groups').select('*, users (name, email)').order('name')
-    const { data: meetingsData } = await supabase.from('basonta_meetings').select('*, basonta_groups (name)').order('meeting_date', { ascending: false })
-    setAllMeetings(meetingsData || [])
-    const groupsWithStats: GroupWithStats[] = []
-    for (const group of groupsData || []) {
-      const gm = meetingsData?.filter(m => m.group_id === group.id) || []
-      const { count: memberCount } = await supabase.from('basonta_members').select('*', { count: 'exact', head: true }).eq('group_id', group.id)
-      groupsWithStats.push({
-        ...group,
-        leader_id: group.leader_id || '',
-        totalMeetings: gm.length,
-        avgAttendance: gm.length > 0 ? gm.reduce((s, m) => s + m.people_present, 0) / gm.length : 0,
-        totalFirstTimers: gm.reduce((s, m) => s + (m.first_timers || 0), 0),
-        totalTestimonies: gm.reduce((s, m) => s + (m.testimonies_count || 0), 0),
-        memberCount: memberCount || 0,
-        lastMeetingDate: gm[0]?.meeting_date || null
-      })
+      if (groupData) {
+        setGroup(groupData)
+
+        const { data: membersData } = await supabase
+          .from('bacenta_members')
+          .select('*')
+          .eq('group_id', groupData.id)
+          .order('name')
+
+        setMembers(membersData || [])
+
+        const { data: meetingsData } = await supabase
+          .from('bacenta_meetings')
+          .select('*')
+          .eq('group_id', groupData.id)
+          .order('meeting_date', { ascending: false })
+
+        setMeetings(meetingsData || [])
+
+        // Calculate stats
+        const totalMembers = membersData?.length || 0
+        const totalMeetings = meetingsData?.length || 0
+        const avgAttendance = totalMeetings > 0
+          ? meetingsData.reduce((sum, m) => sum + m.attendance, 0) / totalMeetings
+          : 0
+        const totalFirstTimers = meetingsData?.reduce((sum, m) => sum + m.first_timers, 0) || 0
+        const totalConverts = meetingsData?.reduce((sum, m) => sum + m.converts, 0) || 0
+        const totalTestimonies = meetingsData?.reduce((sum, m) => sum + m.testimonies_count, 0) || 0
+        const basontaMembers = membersData?.filter(m => m.is_basonta_member).length || 0
+
+        setStats({
+          totalMembers,
+          totalMeetings,
+          avgAttendance,
+          totalFirstTimers,
+          totalConverts,
+          totalTestimonies,
+          basontaMembers
+        })
+      }
+    } catch (error) {
+      console.error('Error loading data:', error)
+    } finally {
+      setLoading(false)
     }
-    setBasontaGroups(groupsWithStats)
-    const mostActive = groupsWithStats.reduce((max, g) => g.totalMeetings > max.totalMeetings ? g : max, groupsWithStats[0] || { totalMeetings: 0, name: 'N/A' })
-    setBasontaStats({
-      totalGroups: groupsWithStats.length,
-      totalMeetings: meetingsData?.length || 0,
-      totalFirstTimers: meetingsData?.reduce((s, m) => s + (m.first_timers || 0), 0) || 0,
-      totalTestimonies: meetingsData?.reduce((s, m) => s + (m.testimonies_count || 0), 0) || 0,
-      avgAttendanceRate: 0,
-      mostActiveGroup: mostActive?.name || 'N/A'
-    })
-  }
-
-  const loadFirstTimers = async () => {
-    const { data } = await supabase.from('first_timers').select('*').order('visit_date', { ascending: false })
-    setFirstTimers(data || [])
-  }
-
-  const loadMembers = async () => {
-    const { data } = await supabase.from('church_members').select('*, shepherd:users!assigned_shepherd_id(name, email)').order('name')
-    setMembers(data || [])
-    const { data: shepherdData } = await supabase.from('users').select('id, name, email').eq('role', 'shepherd')
-    setShepherds(shepherdData || [])
-  }
-
-  const loadShepherding = async () => {
-    const { data: assignData } = await supabase.from('shepherding_assignments').select('*, church_members(*), users(id, name, email)').order('assigned_at', { ascending: false })
-    setAssignments(assignData || [])
-    const { data: followData } = await supabase.from('follow_up_tasks').select('*, church_members(*), users(id, name, email)').order('due_date', { ascending: true })
-    setFollowUps(followData || [])
-    const { data: shepherdData } = await supabase.from('users').select('id, name, email').eq('role', 'shepherd')
-    setShepherds(shepherdData || [])
-    const { data: membersData } = await supabase.from('church_members').select('id, name').order('name')
-    setMembers(membersData || [])
-  }
-
-  const loadAnnouncements = async () => {
-    const { data } = await supabase.from('announcements').select('*').order('created_at', { ascending: false })
-    setAnnouncements(data || [])
-  }
-
-  const handleMarkAnswered = async (id: string) => {
-    await supabase.from('prayer_requests').update({ status: 'answered', answered_at: new Date().toISOString() }).eq('id', id)
-    loadPrayerData(); setSelectedRequest(null)
-  }
-
-  const handleDeleteRequest = async (id: string) => {
-    if (!confirm('Delete this prayer request?')) return
-    await supabase.from('prayer_requests').delete().eq('id', id)
-    loadPrayerData(); setSelectedRequest(null)
-  }
-
-  const handleReassign = async (commitmentId: string, newWarriorId: string) => {
-    if (!confirm('Reassign this prayer?')) return
-    await supabase.from('prayer_commitments').update({ warrior_id: newWarriorId }).eq('id', commitmentId)
-    loadPrayerData(); setSelectedRequest(null)
-  }
-
-  const handleViewGroup = async (group: GroupWithStats) => {
-    setSelectedGroup(group)
-    const { data } = await supabase.from('basonta_meetings').select('*').eq('group_id', group.id).order('meeting_date', { ascending: false })
-    setGroupMeetings(data || [])
-  }
-
-  const handleAddFirstTimer = async () => {
-    if (!firstTimerForm.name.trim()) return
-    await supabase.from('first_timers').insert([{ name: firstTimerForm.name.trim(), phone: firstTimerForm.phone || null, visit_date: firstTimerForm.visit_date, source: firstTimerForm.source, notes: firstTimerForm.notes || null, converted: false }])
-    setFirstTimerForm({ name: '', phone: '', visit_date: new Date().toISOString().split('T')[0], source: 'manual', notes: '' })
-    setShowAddFirstTimer(false); loadFirstTimers()
-  }
-
-  const handlePromoteToMember = async (ft: FirstTimer) => {
-    if (!confirm(`Add ${ft.name} to the Church Members list?`)) return
-    await supabase.from('church_members').insert([{ name: ft.name, phone: ft.phone || null, address: null }])
-    await supabase.from('first_timers').update({ converted: true }).eq('id', ft.id)
-    loadFirstTimers()
-  }
-
-  const handleDeleteFirstTimer = async (id: string) => {
-    if (!confirm('Remove this first timer?')) return
-    await supabase.from('first_timers').delete().eq('id', id)
-    loadFirstTimers()
   }
 
   const handleAddMember = async () => {
-    if (!memberForm.name.trim()) return
-    await supabase.from('church_members').insert([{ name: memberForm.name.trim(), phone: memberForm.phone || null, address: memberForm.address || null }])
-    setMemberForm({ name: '', phone: '', address: '' })
-    setShowAddMember(false); loadMembers()
-  }
+    if (!newMemberForm.name.trim() || !group) return
 
-  const handleDeleteMember = async (id: string) => {
-    if (!confirm('Remove this church member?')) return
-    await supabase.from('church_members').delete().eq('id', id)
-    loadMembers()
-  }
+    try {
+      const { error } = await supabase
+        .from('bacenta_members')
+        .insert([{
+          group_id: group.id,
+          name: newMemberForm.name.trim(),
+          phone: newMemberForm.phone.trim() || null,
+          is_basonta_member: newMemberForm.is_basonta_member
+        }])
 
-  const handleAssignShepherd = async () => {
-    if (!assignForm.member_id || !assignForm.shepherd_id) return
-    await supabase.from('shepherding_assignments').insert([{ member_id: assignForm.member_id, shepherd_id: assignForm.shepherd_id, notes: assignForm.notes || null }])
-    await supabase.from('church_members').update({ assigned_shepherd_id: assignForm.shepherd_id }).eq('id', assignForm.member_id)
-    setAssignForm({ member_id: '', shepherd_id: '', notes: '' })
-    setShowAssignModal(false); loadShepherding()
-  }
+      if (error) throw error
 
-  const handleAssignFollowUp = async () => {
-    if (!followUpForm.member_id || !followUpForm.shepherd_id) return
-    await supabase.from('follow_up_tasks').insert([{ member_id: followUpForm.member_id, shepherd_id: followUpForm.shepherd_id, due_date: followUpForm.due_date || null, notes: followUpForm.notes || null, completed: false }])
-    setFollowUpForm({ member_id: '', shepherd_id: '', due_date: '', notes: '' })
-    setShowFollowUpModal(false); loadShepherding()
-  }
-
-  const handleToggleAnnouncement = async (id: string, current: boolean) => {
-    await supabase.from('announcements').update({ is_active: !current }).eq('id', id)
-    loadAnnouncements()
-  }
-
-  const handleDeleteAnnouncement = async (id: string) => {
-    if (!confirm('Delete this announcement?')) return
-    await supabase.from('announcements').delete().eq('id', id)
-    loadAnnouncements()
-  }
-
-  const handleLogout = async () => { await supabase.auth.signOut(); router.push('/login') }
-
-  const getCategoryColor = (category: string) => {
-    const colors: Record<string, string> = {
-      'General': 'bg-blue-100 text-blue-800 border-blue-200', 'Events': 'bg-purple-100 text-purple-800 border-purple-200',
-      'Services': 'bg-green-100 text-green-800 border-green-200', 'Ministry': 'bg-yellow-100 text-yellow-800 border-yellow-200',
-      'Youth': 'bg-pink-100 text-pink-800 border-pink-200', 'Worship': 'bg-indigo-100 text-indigo-800 border-indigo-200',
-      'Community': 'bg-orange-100 text-orange-800 border-orange-200', 'Urgent': 'bg-red-100 text-red-800 border-red-200'
+      alert('Member added successfully')
+      setNewMemberForm({ name: '', phone: '', is_basonta_member: false })
+      setShowAddMember(false)
+      loadData()
+    } catch (error) {
+      console.error('Error adding member:', error)
+      alert('Error adding member')
     }
-    return colors[category] || 'bg-gray-100 text-gray-800 border-gray-200'
   }
 
-  const tabs: { id: Tab; label: string }[] = [
-    { id: 'prayers', label: 'Prayer Requests' },
-    { id: 'basonta', label: 'Basonta' },
-    { id: 'firsttimers', label: 'First Timers' },
-    { id: 'members', label: 'Church Members' },
-    { id: 'shepherding', label: 'Shepherding' },
-    { id: 'announcements', label: 'Announcements' },
-  ]
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      setPictureFile(file)
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        setPicturePreview(reader.result as string)
+      }
+      reader.readAsDataURL(file)
+    }
+  }
 
+  const uploadPicture = async (): Promise<string | null> => {
+    if (!pictureFile || !group) return null
+
+    setUploading(true)
+    try {
+      const fileExt = pictureFile.name.split('.').pop()
+      const fileName = `${group.id}-${Date.now()}.${fileExt}`
+      const filePath = `${fileName}`
+
+      const { error: uploadError } = await supabase.storage
+        .from('bacenta_pictures')
+        .upload(filePath, pictureFile)
+
+      if (uploadError) throw uploadError
+
+      const { data } = supabase.storage
+        .from('bacenta_pictures')
+        .getPublicUrl(filePath)
+
+      return data.publicUrl
+    } catch (error) {
+      console.error('Error uploading picture:', error)
+      alert('Error uploading picture. Please try again.')
+      return null
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const handleLogMeeting = async () => {
+    if (!group) return
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      let pictureUrl = null
+      if (pictureFile) {
+        pictureUrl = await uploadPicture()
+        if (!pictureUrl && pictureFile) {
+          // Upload failed but user tried to upload
+          return
+        }
+      }
+
+      const { error } = await supabase
+        .from('bacenta_meetings')
+        .insert([{
+          group_id: group.id,
+          meeting_date: meetingForm.date,
+          attendance: meetingForm.attendance,
+          first_timers: meetingForm.first_timers,
+          converts: meetingForm.converts,
+          testimonies_count: meetingForm.testimonies_count,
+          attendance_coming_sunday: meetingForm.attendance_coming_sunday,
+          absent_but_coming_sunday: meetingForm.absent_but_coming_sunday,
+          picture_url: pictureUrl,
+          comments: meetingForm.comments || null,
+          logged_by: user.id
+        }])
+
+      if (error) throw error
+
+      alert('Meeting logged successfully')
+      setShowLogMeeting(false)
+
+      setMeetingForm({
+        date: new Date().toISOString().split('T')[0],
+        attendance: 0,
+        first_timers: 0,
+        converts: 0,
+        testimonies_count: 0,
+        attendance_coming_sunday: 0,
+        absent_but_coming_sunday: 0,
+        comments: ''
+      })
+      setPictureFile(null)
+      setPicturePreview(null)
+
+      loadData()
+    } catch (error) {
+      console.error('Error logging meeting:', error)
+      alert('Error logging meeting')
+    }
+  }
+
+  const handleDeleteMember = async (memberId: string) => {
+    if (!confirm('Are you sure you want to remove this member?')) return
+
+    try {
+      const { error } = await supabase
+        .from('bacenta_members')
+        .delete()
+        .eq('id', memberId)
+
+      if (error) throw error
+
+      alert('Member removed successfully')
+      loadData()
+    } catch (error) {
+      console.error('Error removing member:', error)
+      alert('Error removing member')
+    }
+  }
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut()
+    router.push('/login')
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <div className="text-center">
+          <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-slate-800 mb-4"></div>
+          <p className="text-slate-600 font-medium">Loading dashboard...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // If no group assigned
+  if (!group) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-white rounded-lg shadow-xl border-2 border-slate-200 p-8 text-center">
+          <svg className="w-20 h-20 mx-auto mb-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+          </svg>
+          <h2 className="text-2xl font-bold text-slate-800 mb-3">No Bacenta Group Assigned</h2>
+          <p className="text-slate-600 mb-6">Please contact your church leader to be assigned a bacenta group.</p>
+          <button
+            onClick={handleLogout}
+            className="px-6 py-3 bg-slate-800 text-white rounded-lg font-semibold hover:bg-slate-700 transition"
+          >
+            Sign Out
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // Main Dashboard
   return (
     <div className="min-h-screen bg-white">
+
+      {/* Header */}
       <div className="bg-gradient-to-br from-slate-800 via-slate-700 to-slate-900 text-white">
         <div className="max-w-7xl mx-auto px-4 py-6 flex justify-between items-center">
           <div>
-            <p className="text-slate-400 text-xs font-semibold uppercase tracking-widest mb-1">Church Leadership</p>
-            <h1 className="text-2xl font-serif font-bold text-white">Leadership Dashboard</h1>
-            <p className="text-slate-300 text-sm mt-1">{user?.email}</p>
+            <p className="text-slate-400 text-xs font-semibold uppercase tracking-widest mb-1">
+              Bacenta Leader
+            </p>
+            <h1 className="text-2xl font-serif font-bold text-white">
+              {group.name}
+            </h1>
+            <p className="text-slate-300 text-sm mt-1">
+              {group.location} • {group.meeting_day}s at {group.meeting_time || 'TBD'}
+            </p>
           </div>
           <div className="flex items-center gap-3">
-            <a href="/" className="px-4 py-2 border border-slate-600 text-slate-300 rounded-lg hover:bg-slate-700 text-sm font-medium transition-all">Home</a>
-            <button onClick={handleLogout} className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-semibold transition-all">Sign Out</button>
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-white border-b-2 border-slate-200 sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4">
-          <div className="flex overflow-x-auto">
-            {tabs.map(tab => (
-              <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-                className={`py-4 px-5 border-b-2 font-semibold text-sm whitespace-nowrap transition-colors ${activeTab === tab.id ? 'border-slate-800 text-slate-800' : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>
-                {tab.label}
-              </button>
-            ))}
+            <button
+              onClick={handleLogout}
+              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-semibold transition-all"
+            >
+              Sign Out
+            </button>
           </div>
         </div>
       </div>
 
       <div className="max-w-7xl mx-auto px-4 py-10">
-        {loading ? (
-          <div className="text-center py-20">
-            <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-slate-800 mb-4"></div>
-            <p className="text-slate-600">Loading...</p>
+
+        {/* Stats Grid */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
+          {[
+            { label: 'Members', value: stats.totalMembers },
+            { label: 'Meetings', value: stats.totalMeetings },
+            { label: 'Avg Attendance', value: stats.avgAttendance.toFixed(1) },
+            { label: 'Converts', value: stats.totalConverts },
+          ].map((stat) => (
+            <div
+              key={stat.label}
+              className="bg-white rounded-lg border-2 border-slate-200 p-5 hover:border-slate-300 hover:shadow-lg transition-all"
+            >
+              <div className="text-3xl font-bold text-slate-800">{stat.value}</div>
+              <div className="text-sm text-slate-500 font-medium mt-1 uppercase tracking-wide">{stat.label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Action Buttons */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-10">
+          <button
+            onClick={() => setShowAddMember(true)}
+            className="bg-slate-800 text-white py-4 rounded-lg font-semibold hover:bg-slate-700 transition-all shadow-lg hover:shadow-xl"
+          >
+            Add Member
+          </button>
+          <button
+            onClick={() => setShowLogMeeting(true)}
+            className="bg-blue-600 text-white py-4 rounded-lg font-semibold hover:bg-blue-700 transition-all shadow-lg hover:shadow-xl"
+          >
+            Log Meeting
+          </button>
+        </div>
+
+        {/* Meetings Log */}
+        <div className="bg-white rounded-lg border-2 border-slate-200 p-8 mb-8">
+          <h2 className="text-2xl font-serif font-bold text-slate-800 mb-6">Recent Meetings</h2>
+          {meetings.length > 0 ? (
+            <div className="space-y-4">
+              {meetings.map(meeting => (
+                <div key={meeting.id} className="p-5 bg-slate-50 rounded-lg border-2 border-slate-200 hover:border-slate-300 transition-all">
+                  <div className="flex justify-between items-start mb-4">
+                    <div>
+                      <p className="font-bold text-slate-800 text-lg">
+                        {new Date(meeting.meeting_date).toLocaleDateString('en-US', {
+                          weekday: 'long',
+                          year: 'numeric',
+                          month: 'long',
+                          day: 'numeric'
+                        })}
+                      </p>
+                      <p className="text-sm text-slate-500 mt-1">{group.name}</p>
+                    </div>
+                    {meeting.picture_url && (
+                      <img 
+                        src={meeting.picture_url} 
+                        alt="Bacenta meeting" 
+                        className="w-24 h-24 object-cover rounded-lg border-2 border-slate-200"
+                      />
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                    <div className="text-center p-3 bg-blue-50 rounded-lg border border-blue-100">
+                      <div className="text-xl font-bold text-blue-800">{meeting.attendance}</div>
+                      <div className="text-xs text-blue-600 font-semibold uppercase tracking-wide mt-1">Attendance</div>
+                    </div>
+                    <div className="text-center p-3 bg-green-50 rounded-lg border border-green-100">
+                      <div className="text-xl font-bold text-green-800">{meeting.first_timers}</div>
+                      <div className="text-xs text-green-600 font-semibold uppercase tracking-wide mt-1">First Timers</div>
+                    </div>
+                    <div className="text-center p-3 bg-purple-50 rounded-lg border border-purple-100">
+                      <div className="text-xl font-bold text-purple-800">{meeting.converts}</div>
+                      <div className="text-xs text-purple-600 font-semibold uppercase tracking-wide mt-1">Converts</div>
+                    </div>
+                    <div className="text-center p-3 bg-orange-50 rounded-lg border border-orange-100">
+                      <div className="text-xl font-bold text-orange-800">{meeting.testimonies_count}</div>
+                      <div className="text-xs text-orange-600 font-semibold uppercase tracking-wide mt-1">Testimonies</div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 mb-4">
+                    <div className="text-center p-3 bg-cyan-50 rounded-lg border border-cyan-100">
+                      <div className="text-xl font-bold text-cyan-800">{meeting.attendance_coming_sunday}</div>
+                      <div className="text-xs text-cyan-600 font-semibold uppercase tracking-wide mt-1">Coming Sunday</div>
+                    </div>
+                    <div className="text-center p-3 bg-yellow-50 rounded-lg border border-yellow-100">
+                      <div className="text-xl font-bold text-yellow-800">{meeting.absent_but_coming_sunday}</div>
+                      <div className="text-xs text-yellow-600 font-semibold uppercase tracking-wide mt-1">Absent but Coming</div>
+                    </div>
+                  </div>
+                  {meeting.comments && (
+                    <div className="p-4 bg-white rounded-lg border-2 border-slate-200">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Comments</p>
+                      <p className="text-sm text-slate-700 leading-relaxed">{meeting.comments}</p>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-16 bg-slate-50 rounded-lg border-2 border-slate-200">
+              <p className="text-slate-500 text-lg">No meetings logged yet</p>
+              <button
+                onClick={() => setShowLogMeeting(true)}
+                className="mt-4 text-slate-700 hover:text-slate-900 font-semibold underline underline-offset-4 text-sm"
+              >
+                Log your first meeting
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Members List */}
+        <div className="bg-white rounded-lg border-2 border-slate-200 p-8 mb-8">
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-2xl font-serif font-bold text-slate-800">Bacenta Members</h2>
+            <p className="text-sm text-slate-500">
+              <span className="font-semibold text-slate-700">{stats.basontaMembers}</span> also in Basonta
+            </p>
           </div>
-        ) : (
-          <>
-            {activeTab === 'prayers' && (
-              <>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
-                  {[
-                    { label: 'Total Requests', value: prayerStats.totalRequests },
-                    { label: 'Prayer Hours', value: prayerStats.totalHours.toFixed(1) },
-                    { label: 'Active Warriors', value: prayerStats.activeWarriors },
-                    { label: 'Answered', value: prayerStats.answeredPrayers },
-                  ].map(s => (
-                    <div key={s.label} className="bg-white rounded-lg border-2 border-slate-200 p-5 hover:border-slate-300 hover:shadow-lg transition-all">
-                      <div className="text-3xl font-bold text-slate-800">{s.value}</div>
-                      <div className="text-xs text-slate-500 font-semibold mt-1 uppercase tracking-wide">{s.label}</div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="flex gap-3 mb-6">
-                  {(['all', 'active', 'answered'] as const).map(f => (
-                    <button key={f} onClick={() => setFilter(f)}
-                      className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all capitalize ${filter === f ? 'bg-slate-800 text-white' : 'bg-white border-2 border-slate-200 text-slate-700 hover:border-slate-300'}`}>
-                      {f}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="space-y-4">
-                  {requests.map(request => (
-                    <div key={request.id} className="bg-white rounded-lg border-2 border-slate-200 p-6 hover:border-slate-300 hover:shadow-lg transition-all">
-                      <div className="flex flex-wrap gap-2 mb-3">
-                        <span className="px-3 py-1 rounded border bg-blue-100 text-blue-800 border-blue-200 text-xs font-semibold uppercase tracking-wide">{request.category}</span>
-                        {request.status === 'answered' && <span className="px-3 py-1 rounded border bg-green-100 text-green-800 border-green-200 text-xs font-semibold uppercase tracking-wide">Answered</span>}
-                        {request.privacy_level === 'anonymous' && <span className="px-3 py-1 rounded border bg-slate-100 text-slate-600 border-slate-200 text-xs font-semibold uppercase tracking-wide">Anonymous</span>}
-                      </div>
-                      <h3 className="text-lg font-bold text-slate-800 mb-1">{request.title}</h3>
-                      {request.requester_name && <p className="text-sm text-slate-500 mb-2">Submitted by {request.requester_name}</p>}
-                      <p className="text-slate-600 text-sm line-clamp-2 mb-4">{request.description}</p>
-                      <div className="grid grid-cols-3 gap-3 p-4 bg-slate-50 rounded-lg border border-slate-200 mb-4">
-                        {[{ v: request.warriors_count, l: 'Warriors' }, { v: request.total_hours.toFixed(1), l: 'Hours' }, { v: request.commitments.filter(c => c.completed).length, l: 'Complete' }].map(s => (
-                          <div key={s.l} className="text-center">
-                            <div className="text-xl font-bold text-slate-800">{s.v}</div>
-                            <div className="text-xs text-slate-500 mt-0.5">{s.l}</div>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="flex gap-2">
-                        <button onClick={() => setSelectedRequest(request)} className="flex-1 bg-slate-800 text-white py-2.5 rounded-lg font-semibold hover:bg-slate-700 transition-all text-sm">View Details</button>
-                        {request.status === 'active' && <button onClick={() => handleMarkAnswered(request.id)} className="px-4 py-2.5 bg-green-700 text-white rounded-lg hover:bg-green-800 font-semibold transition-all text-sm">Mark Answered</button>}
-                        <button onClick={() => handleDeleteRequest(request.id)} className="px-4 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 font-semibold transition-all text-sm">Delete</button>
-                      </div>
-                    </div>
-                  ))}
-                  {requests.length === 0 && (
-                    <div className="text-center py-16 bg-slate-50 rounded-lg border-2 border-slate-200">
-                      <p className="text-slate-500 text-lg">No prayer requests found</p>
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-
-            {activeTab === 'basonta' && (
-              <>
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-10">
-                  {[
-                    { label: 'Groups', value: basontaStats.totalGroups },
-                    { label: 'Meetings', value: basontaStats.totalMeetings },
-                    { label: 'First Timers', value: basontaStats.totalFirstTimers },
-                    { label: 'Testimonies', value: basontaStats.totalTestimonies },
-                  ].map(s => (
-                    <div key={s.label} className="bg-white rounded-lg border-2 border-slate-200 p-4 hover:border-slate-300 transition-all">
-                      <div className="text-2xl font-bold text-slate-800">{s.value}</div>
-                      <div className="text-xs text-slate-500 font-semibold mt-1 uppercase tracking-wide">{s.label}</div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
-                  {basontaGroups.map(group => (
-                    <div key={group.id} className="bg-white rounded-lg border-2 border-slate-200 p-6 hover:border-slate-300 hover:shadow-xl transition-all">
-                      <h3 className="text-lg font-bold text-slate-800">{group.name}</h3>
-                      <p className="text-sm text-slate-500 mt-1">Leader: {group.users.name}</p>
-                      <p className="text-xs text-slate-400 mt-0.5">{group.prayer_day}s at {group.prayer_time}</p>
-                      <div className="grid grid-cols-2 gap-3 mt-4 mb-4">
-                        {[{ v: group.memberCount, l: 'Members', c: 'bg-blue-50 text-blue-800 border-blue-100' }, { v: group.totalMeetings, l: 'Meetings', c: 'bg-green-50 text-green-800 border-green-100' }, { v: group.totalFirstTimers, l: 'First Timers', c: 'bg-purple-50 text-purple-800 border-purple-100' }, { v: group.totalTestimonies, l: 'Testimonies', c: 'bg-orange-50 text-orange-800 border-orange-100' }].map(s => (
-                          <div key={s.l} className={`text-center p-2 rounded-lg border ${s.c}`}>
-                            <div className="text-lg font-bold">{s.v}</div>
-                            <div className="text-xs font-semibold mt-0.5">{s.l}</div>
-                          </div>
-                        ))}
-                      </div>
-                      <button onClick={() => handleViewGroup(group)} className="w-full bg-slate-800 text-white py-2.5 rounded-lg font-semibold hover:bg-slate-700 transition-all text-sm">View Details</button>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="bg-white rounded-lg border-2 border-slate-200 p-8">
-                  <h2 className="text-2xl font-serif font-bold text-slate-800 mb-6">Recent Meetings</h2>
-                  {allMeetings.slice(0, 10).map(meeting => (
-                    <div key={meeting.id} className="p-5 bg-slate-50 rounded-lg border-2 border-slate-200 mb-4">
-                      <p className="font-bold text-slate-800">{meeting.basonta_groups.name}</p>
-                      <p className="text-sm text-slate-500 mt-1">{new Date(meeting.meeting_date).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
-                      <div className="grid grid-cols-3 gap-3 mt-3">
-                        {[{ v: meeting.people_present, l: 'Present', c: 'bg-blue-50 text-blue-800 border-blue-100' }, { v: meeting.first_timers, l: 'First Timers', c: 'bg-green-50 text-green-800 border-green-100' }, { v: meeting.testimonies_count, l: 'Testimonies', c: 'bg-purple-50 text-purple-800 border-purple-100' }].map(s => (
-                          <div key={s.l} className={`text-center p-2 rounded-lg border ${s.c}`}>
-                            <div className="text-lg font-bold">{s.v}</div>
-                            <div className="text-xs font-semibold mt-0.5">{s.l}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-
-            {activeTab === 'firsttimers' && (
-              <>
-                <div className="flex justify-between items-center mb-8">
+          {members.length > 0 ? (
+            <div className="space-y-2">
+              {members.map(member => (
+                <div
+                  key={member.id}
+                  className="flex items-center justify-between p-4 bg-slate-50 rounded-lg border-2 border-slate-200 hover:border-slate-300 transition-all"
+                >
                   <div>
-                    <h2 className="text-2xl font-serif font-bold text-slate-800">First Timers</h2>
-                    <p className="text-slate-500 text-sm mt-1">Track and follow up with new visitors</p>
-                  </div>
-                  <button onClick={() => setShowAddFirstTimer(true)} className="px-6 py-3 bg-slate-800 text-white rounded-lg font-semibold hover:bg-slate-700 transition-all shadow-lg">
-                    Add First Timer
-                  </button>
-                </div>
-
-                <div className="space-y-3">
-                  {firstTimers.map(ft => (
-                    <div key={ft.id} className={`bg-white rounded-lg border-2 p-5 hover:shadow-lg transition-all ${ft.converted ? 'border-green-200 opacity-70' : 'border-slate-200 hover:border-slate-300'}`}>
-                      <div className="flex justify-between items-start">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3 mb-1">
-                            <h3 className="font-bold text-slate-800 text-lg">{ft.name}</h3>
-                            {ft.converted && <span className="px-2 py-0.5 bg-green-100 text-green-700 border border-green-200 rounded text-xs font-semibold uppercase tracking-wide">Member</span>}
-                            <span className="px-2 py-0.5 bg-slate-100 text-slate-600 border border-slate-200 rounded text-xs font-semibold uppercase tracking-wide">{ft.source}</span>
-                          </div>
-                          {ft.phone && <p className="text-sm text-slate-500">{ft.phone}</p>}
-                          <p className="text-xs text-slate-400 mt-1">Visited: {new Date(ft.visit_date).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
-                          {ft.notes && <p className="text-sm text-slate-600 mt-2 italic">{ft.notes}</p>}
-                        </div>
-                        <div className="flex gap-2 ml-4">
-                          {!ft.converted && (
-                            <button onClick={() => handlePromoteToMember(ft)} className="px-3 py-2 bg-green-700 text-white rounded-lg hover:bg-green-800 text-xs font-semibold transition-all">
-                              Add to Members
-                            </button>
-                          )}
-                          <button onClick={() => handleDeleteFirstTimer(ft.id)} className="px-3 py-2 border-2 border-red-200 text-red-600 rounded-lg hover:bg-red-50 text-xs font-semibold transition-all">
-                            Remove
-                          </button>
-                        </div>
-                      </div>
+                    <div className="flex items-center gap-2">
+                      <p className="font-semibold text-slate-800">{member.name}</p>
+                      {member.is_basonta_member && (
+                        <span className="px-2 py-0.5 bg-green-100 text-green-700 border border-green-200 rounded text-xs font-semibold">
+                          Basonta
+                        </span>
+                      )}
                     </div>
-                  ))}
-                  {firstTimers.length === 0 && (
-                    <div className="text-center py-16 bg-slate-50 rounded-lg border-2 border-slate-200">
-                      <p className="text-slate-500 text-lg">No first timers recorded yet</p>
-                      <p className="text-slate-400 text-sm mt-1">Add visitors manually or they will appear automatically from Basonta meeting logs</p>
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-
-            {activeTab === 'members' && (
-              <>
-                <div className="flex justify-between items-center mb-8">
-                  <div>
-                    <h2 className="text-2xl font-serif font-bold text-slate-800">Church Members</h2>
-                    <p className="text-slate-500 text-sm mt-1">{members.length} registered members</p>
-                  </div>
-                  <button onClick={() => setShowAddMember(true)} className="px-6 py-3 bg-slate-800 text-white rounded-lg font-semibold hover:bg-slate-700 transition-all shadow-lg">
-                    Add Member
-                  </button>
-                </div>
-
-                <div className="space-y-3">
-                  {members.map(member => (
-                    <div key={member.id} className="bg-white rounded-lg border-2 border-slate-200 p-5 hover:border-slate-300 hover:shadow-lg transition-all">
-                      <div className="flex justify-between items-start">
-                        <div className="flex-1">
-                          <h3 className="font-bold text-slate-800 text-lg">{member.name}</h3>
-                          {member.phone && <p className="text-sm text-slate-500 mt-0.5">{member.phone}</p>}
-                          {member.address && <p className="text-sm text-slate-500 mt-0.5">{member.address}</p>}
-                          {member.shepherd && (
-                            <p className="text-xs text-slate-400 mt-2">
-                              Shepherd: <span className="font-semibold text-slate-600">{member.shepherd.name}</span>
-                            </p>
-                          )}
-                        </div>
-                        <button onClick={() => handleDeleteMember(member.id)} className="px-3 py-2 border-2 border-red-200 text-red-600 rounded-lg hover:bg-red-50 text-xs font-semibold transition-all ml-4">
-                          Remove
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                  {members.length === 0 && (
-                    <div className="text-center py-16 bg-slate-50 rounded-lg border-2 border-slate-200">
-                      <p className="text-slate-500 text-lg">No church members yet</p>
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-
-            {activeTab === 'shepherding' && (
-              <>
-                <div className="flex justify-between items-start mb-8">
-                  <div>
-                    <h2 className="text-2xl font-serif font-bold text-slate-800">Shepherding</h2>
-                    <p className="text-slate-500 text-sm mt-1">Assign members to shepherds and manage follow-ups</p>
-                  </div>
-                  <div className="flex gap-3">
-                    <button onClick={() => setShowAssignModal(true)} className="px-5 py-3 bg-slate-800 text-white rounded-lg font-semibold hover:bg-slate-700 transition-all shadow-lg text-sm">
-                      Assign Shepherd
-                    </button>
-                    <button onClick={() => setShowFollowUpModal(true)} className="px-5 py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-all shadow-lg text-sm">
-                      Assign Follow-Up
-                    </button>
-                  </div>
-                </div>
-
-                <div className="mb-10">
-                  <h3 className="text-lg font-serif font-bold text-slate-800 mb-5">Current Assignments</h3>
-                  <div className="space-y-3">
-                    {assignments.map(a => (
-                      <div key={a.id} className="bg-white rounded-lg border-2 border-slate-200 p-5 hover:border-slate-300 transition-all">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <p className="font-bold text-slate-800">{a.church_members.name}</p>
-                            <p className="text-sm text-slate-500 mt-0.5">Shepherd: <span className="font-semibold text-slate-700">{a.users.name}</span></p>
-                            <p className="text-xs text-slate-400 mt-1">Assigned {new Date(a.assigned_at).toLocaleDateString()}</p>
-                            {a.notes && <p className="text-sm text-slate-600 mt-2 italic">{a.notes}</p>}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                    {assignments.length === 0 && (
-                      <div className="text-center py-12 bg-slate-50 rounded-lg border-2 border-slate-200">
-                        <p className="text-slate-500">No shepherding assignments yet</p>
-                      </div>
+                    {member.phone && (
+                      <p className="text-sm text-slate-500 mt-0.5">{member.phone}</p>
                     )}
                   </div>
+                  <button
+                    onClick={() => handleDeleteMember(member.id)}
+                    className="px-4 py-2 text-red-600 border-2 border-transparent hover:border-red-200 hover:bg-red-50 rounded-lg text-sm font-semibold transition-all"
+                  >
+                    Remove
+                  </button>
                 </div>
-
-                <div>
-                  <h3 className="text-lg font-serif font-bold text-slate-800 mb-5">Follow-Up Tasks</h3>
-                  <div className="space-y-3">
-                    {followUps.map(f => (
-                      <div key={f.id} className={`bg-white rounded-lg border-2 p-5 transition-all ${f.completed ? 'border-green-200 opacity-70' : 'border-slate-200 hover:border-slate-300'}`}>
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <p className="font-bold text-slate-800">{f.church_members.name}</p>
-                            <p className="text-sm text-slate-500 mt-0.5">Assigned to: <span className="font-semibold text-slate-700">{f.users.name}</span></p>
-                            {f.due_date && <p className="text-xs text-slate-400 mt-1">Due: {new Date(f.due_date).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>}
-                            {f.notes && <p className="text-sm text-slate-600 mt-2 italic">{f.notes}</p>}
-                          </div>
-                          {f.completed && <span className="px-3 py-1 bg-green-100 text-green-700 border border-green-200 rounded text-xs font-semibold uppercase tracking-wide">Complete</span>}
-                        </div>
-                      </div>
-                    ))}
-                    {followUps.length === 0 && (
-                      <div className="text-center py-12 bg-slate-50 rounded-lg border-2 border-slate-200">
-                        <p className="text-slate-500">No follow-up tasks assigned yet</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </>
-            )}
-
-            {activeTab === 'announcements' && (
-              <>
-                <div className="flex justify-between items-center mb-8">
-                  <h2 className="text-2xl font-serif font-bold text-slate-800">Announcements</h2>
-                  <a href="/announcements/create" className="px-6 py-3 bg-slate-800 text-white rounded-lg font-semibold hover:bg-slate-700 transition-all shadow-lg text-sm">
-                    Create Announcement
-                  </a>
-                </div>
-
-                {announcements.length > 0 ? (
-                  <div className="space-y-4">
-                    {announcements.map(a => (
-                      <div key={a.id} className={`bg-white rounded-lg border-2 border-slate-200 p-6 transition-all ${!a.is_active ? 'opacity-60' : 'hover:border-slate-300 hover:shadow-lg'}`}>
-                        <div className="flex justify-between items-start">
-                          <div className="flex-1">
-                            <div className="flex flex-wrap gap-2 mb-3">
-                              <span className={`px-3 py-1 rounded border text-xs font-semibold uppercase tracking-wide ${getCategoryColor(a.category)}`}>{a.category}</span>
-                              {a.priority > 0 && <span className="px-3 py-1 rounded border bg-red-100 text-red-800 border-red-200 text-xs font-semibold uppercase tracking-wide">Important</span>}
-                              {!a.is_active && <span className="px-3 py-1 rounded border bg-slate-100 text-slate-600 border-slate-200 text-xs font-semibold uppercase tracking-wide">Inactive</span>}
-                            </div>
-                            <h3 className="text-xl font-bold text-slate-800 mb-2">{a.title}</h3>
-                            <p className="text-slate-600 text-sm line-clamp-2 mb-3">{a.description}</p>
-                            {a.event_date && <p className="text-xs text-slate-400">Event: {new Date(a.event_date).toLocaleString()}</p>}
-                          </div>
-                          {a.flyer_url && <img src={a.flyer_url} alt={a.title} className="w-24 h-24 object-cover rounded-lg border-2 border-slate-200 ml-4" />}
-                        </div>
-                        <div className="flex gap-2 mt-4">
-                          <button onClick={() => handleToggleAnnouncement(a.id, a.is_active)} className={`px-4 py-2 rounded-lg font-semibold text-sm transition-all ${a.is_active ? 'bg-orange-100 text-orange-800 border-2 border-orange-200 hover:bg-orange-200' : 'bg-green-100 text-green-800 border-2 border-green-200 hover:bg-green-200'}`}>
-                            {a.is_active ? 'Deactivate' : 'Activate'}
-                          </button>
-                          <button onClick={() => handleDeleteAnnouncement(a.id)} className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-semibold text-sm transition-all">Delete</button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-center py-16 bg-slate-50 rounded-lg border-2 border-slate-200">
-                    <p className="text-slate-500 text-lg">No announcements yet</p>
-                  </div>
-                )}
-              </>
-            )}
-          </>
-        )}
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-16 bg-slate-50 rounded-lg border-2 border-slate-200">
+              <p className="text-slate-500 text-lg">No members yet. Add your first member.</p>
+            </div>
+          )}
+        </div>
       </div>
 
+      {/* Footer */}
       <footer className="bg-slate-800 text-white py-10 px-4 border-t-4 border-slate-900 mt-16">
         <div className="max-w-7xl mx-auto text-center">
-          <p className="text-slate-300">Church Prayer Management System</p>
-          <p className="text-slate-400 text-sm mt-2">&copy; 2026 All rights reserved</p>
+          <p className="text-slate-300">{getChurchName.full()}</p>
+          <p className="text-slate-400 text-sm mt-2">&copy; {APP_CONFIG.copyrightYear} All rights reserved</p>
         </div>
       </footer>
 
-      {/* Prayer Detail Modal */}
-      {selectedRequest && (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-lg border-2 border-slate-200 max-w-3xl w-full max-h-[90vh] overflow-y-auto p-8 shadow-2xl">
-            <div className="flex justify-between items-start mb-6">
-              <div>
-                <h2 className="text-2xl font-serif font-bold text-slate-800 mb-3">{selectedRequest.title}</h2>
-                <div className="flex flex-wrap gap-2">
-                  <span className="px-3 py-1 rounded border bg-blue-100 text-blue-800 border-blue-200 text-xs font-semibold uppercase tracking-wide">{selectedRequest.category}</span>
-                  {selectedRequest.requester_name && <span className="text-sm text-slate-600">by {selectedRequest.requester_name}</span>}
-                </div>
-              </div>
-              <button onClick={() => setSelectedRequest(null)} className="text-slate-400 hover:text-slate-700 text-2xl transition-colors">&times;</button>
-            </div>
-            <div className="mb-6">
-              <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-3">Prayer Request</h3>
-              <p className="text-slate-700 leading-relaxed whitespace-pre-wrap">{selectedRequest.description}</p>
-            </div>
-            {selectedRequest.requester_phone && <p className="text-sm text-slate-600 mb-1">Phone: {selectedRequest.requester_phone}</p>}
-            {selectedRequest.requester_email && <p className="text-sm text-slate-600 mb-6">Email: {selectedRequest.requester_email}</p>}
-            {selectedRequest.commitments.length > 0 && (
-              <div className="mb-6">
-                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-4">Prayer Warriors</h3>
-                <div className="space-y-3">
-                  {selectedRequest.commitments.map(c => (
-                    <div key={c.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-lg border-2 border-slate-200">
-                      <div>
-                        <p className="font-semibold text-slate-800">{c.users.name}</p>
-                        <p className="text-sm text-slate-500">{c.hours_completed.toFixed(1)} / {c.total_hours_target}h</p>
-                        <div className="w-32 bg-slate-200 rounded-full h-1.5 mt-2">
-                          <div className="bg-slate-800 h-1.5 rounded-full" style={{ width: `${Math.min((c.hours_completed / c.total_hours_target) * 100, 100)}%` }} />
-                        </div>
-                      </div>
-                      <select onChange={(e) => { if (e.target.value) handleReassign(c.id, e.target.value) }} className="ml-4 px-3 py-2 border-2 border-slate-200 rounded-lg text-sm text-slate-800 bg-white" defaultValue="">
-                        <option value="">Reassign</option>
-                        {warriors.filter(w => w.id !== c.warrior_id).map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-                      </select>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            <div className="flex gap-3">
-              {selectedRequest.status === 'active' && <button onClick={() => handleMarkAnswered(selectedRequest.id)} className="flex-1 bg-green-700 text-white py-3 rounded-lg font-semibold hover:bg-green-800 transition-all">Mark as Answered</button>}
-              <button onClick={() => setSelectedRequest(null)} className="px-6 py-3 border-2 border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 font-semibold transition-all">Close</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Basonta Group Modal */}
-      {selectedGroup && (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-lg border-2 border-slate-200 max-w-3xl w-full max-h-[90vh] overflow-y-auto p-8 shadow-2xl">
-            <div className="flex justify-between items-start mb-6">
-              <div>
-                <h2 className="text-2xl font-serif font-bold text-slate-800 mb-1">{selectedGroup.name}</h2>
-                <p className="text-slate-500 text-sm">Leader: {selectedGroup.users.name} &mdash; {selectedGroup.prayer_day}s at {selectedGroup.prayer_time}</p>
-              </div>
-              <button onClick={() => setSelectedGroup(null)} className="text-slate-400 hover:text-slate-700 text-2xl transition-colors">&times;</button>
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              {[{ v: selectedGroup.memberCount, l: 'Members', c: 'bg-blue-50 text-blue-800 border-blue-200' }, { v: selectedGroup.totalMeetings, l: 'Meetings', c: 'bg-green-50 text-green-800 border-green-200' }, { v: selectedGroup.totalFirstTimers, l: 'First Timers', c: 'bg-purple-50 text-purple-800 border-purple-200' }, { v: selectedGroup.totalTestimonies, l: 'Testimonies', c: 'bg-orange-50 text-orange-800 border-orange-200' }].map(s => (
-                <div key={s.l} className={`text-center p-4 rounded-lg border-2 ${s.c}`}>
-                  <div className="text-2xl font-bold">{s.v}</div>
-                  <div className="text-xs font-semibold mt-1 uppercase tracking-wide">{s.l}</div>
-                </div>
-              ))}
-            </div>
-            <div className="space-y-3">
-              {groupMeetings.map(m => (
-                <div key={m.id} className="p-4 bg-slate-50 rounded-lg border-2 border-slate-200">
-                  <p className="font-bold text-slate-800">{new Date(m.meeting_date).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
-                  <div className="grid grid-cols-4 gap-2 mt-3">
-                    {[{ v: m.people_present, l: 'Present' }, { v: m.first_timers, l: 'First Timers' }, { v: m.testimonies_count, l: 'Testimonies' }, { v: selectedGroup.memberCount > 0 ? `${Math.round((m.people_present / selectedGroup.memberCount) * 100)}%` : '0%', l: 'Rate' }].map(s => (
-                      <div key={s.l} className="text-center p-2 bg-white rounded-lg border-2 border-slate-200">
-                        <div className="font-bold text-slate-800">{s.v}</div>
-                        <div className="text-xs text-slate-500 mt-0.5">{s.l}</div>
-                      </div>
-                    ))}
-                  </div>
-                  {m.comments && <p className="text-sm text-slate-600 mt-3 p-3 bg-white rounded-lg border border-slate-200">{m.comments}</p>}
-                </div>
-              ))}
-            </div>
-            <button onClick={() => setSelectedGroup(null)} className="w-full mt-6 py-3 border-2 border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 font-semibold transition-all">Close</button>
-          </div>
-        </div>
-      )}
-
-      {/* Add First Timer Modal */}
-      {showAddFirstTimer && (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg border-2 border-slate-200 max-w-md w-full p-8 shadow-2xl">
-            <h2 className="text-2xl font-serif font-bold text-slate-800 mb-2">Add First Timer</h2>
-            <p className="text-slate-500 text-sm mb-8">Record a new visitor to the church</p>
-            <div className="space-y-5">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Full Name</label>
-                <input type="text" value={firstTimerForm.name} onChange={e => setFirstTimerForm({ ...firstTimerForm, name: e.target.value })} placeholder="Visitor's full name" className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 placeholder-slate-400 transition-colors" />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Phone <span className="text-slate-400 font-normal normal-case">(optional)</span></label>
-                <input type="tel" value={firstTimerForm.phone} onChange={e => setFirstTimerForm({ ...firstTimerForm, phone: e.target.value })} placeholder="+1234567890" className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 placeholder-slate-400 transition-colors" />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Visit Date</label>
-                <input type="date" value={firstTimerForm.visit_date} onChange={e => setFirstTimerForm({ ...firstTimerForm, visit_date: e.target.value })} className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors" />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Source</label>
-                <select value={firstTimerForm.source} onChange={e => setFirstTimerForm({ ...firstTimerForm, source: e.target.value })} className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors">
-                  <option value="manual">Manual Entry</option>
-                  <option value="basonta">Basonta Meeting</option>
-                  <option value="service">Sunday Service</option>
-                  <option value="event">Church Event</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Notes <span className="text-slate-400 font-normal normal-case">(optional)</span></label>
-                <textarea value={firstTimerForm.notes} onChange={e => setFirstTimerForm({ ...firstTimerForm, notes: e.target.value })} placeholder="Any notes about the visitor..." rows={3} className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 placeholder-slate-400 bg-white resize-none transition-colors" />
-              </div>
-            </div>
-            <div className="flex gap-3 mt-8">
-              <button onClick={handleAddFirstTimer} disabled={!firstTimerForm.name.trim()} className="flex-1 bg-slate-800 text-white py-3 rounded-lg font-semibold hover:bg-slate-700 transition-all disabled:bg-slate-300 disabled:cursor-not-allowed">Add First Timer</button>
-              <button onClick={() => setShowAddFirstTimer(false)} className="px-6 py-3 border-2 border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 font-semibold transition-all">Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Add Member Modal */}
+      {/* ── Add Member Modal ── */}
       {showAddMember && (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg border-2 border-slate-200 max-w-md w-full p-8 shadow-2xl">
-            <h2 className="text-2xl font-serif font-bold text-slate-800 mb-2">Add Church Member</h2>
-            <p className="text-slate-500 text-sm mb-8">Add a new member to the church directory</p>
+            <h2 className="text-2xl font-serif font-bold text-slate-800 mb-2">Add New Member</h2>
+            <p className="text-slate-500 text-sm mb-8">Add a member to {group.name}</p>
+
             <div className="space-y-5">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Full Name</label>
-                <input type="text" value={memberForm.name} onChange={e => setMemberForm({ ...memberForm, name: e.target.value })} placeholder="Member's full name" className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 placeholder-slate-400 transition-colors" />
+                <label className="block text-sm font-semibold text-slate-700 mb-2 uppercase tracking-wide">
+                  Full Name
+                </label>
+                <input
+                  type="text"
+                  value={newMemberForm.name}
+                  onChange={(e) => setNewMemberForm({ ...newMemberForm, name: e.target.value })}
+                  placeholder="Member's full name"
+                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 placeholder-slate-400 transition-colors"
+                />
               </div>
+
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Phone <span className="text-slate-400 font-normal normal-case">(optional)</span></label>
-                <input type="tel" value={memberForm.phone} onChange={e => setMemberForm({ ...memberForm, phone: e.target.value })} placeholder="+1234567890" className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 placeholder-slate-400 transition-colors" />
+                <label className="block text-sm font-semibold text-slate-700 mb-2 uppercase tracking-wide">
+                  Phone Number <span className="text-slate-400 font-normal normal-case">(optional)</span>
+                </label>
+                <input
+                  type="tel"
+                  value={newMemberForm.phone}
+                  onChange={(e) => setNewMemberForm({ ...newMemberForm, phone: e.target.value })}
+                  placeholder="+36 XX XXX XXXX"
+                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 placeholder-slate-400 transition-colors"
+                />
               </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Address <span className="text-slate-400 font-normal normal-case">(optional)</span></label>
-                <textarea value={memberForm.address} onChange={e => setMemberForm({ ...memberForm, address: e.target.value })} placeholder="Street address, city..." rows={2} className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 placeholder-slate-400 bg-white resize-none transition-colors" />
+
+              <div className="flex items-center gap-3 p-4 bg-slate-50 rounded-lg border-2 border-slate-200">
+                <input
+                  type="checkbox"
+                  id="is_basonta"
+                  checked={newMemberForm.is_basonta_member}
+                  onChange={(e) => setNewMemberForm({ ...newMemberForm, is_basonta_member: e.target.checked })}
+                  className="w-4 h-4 rounded border-slate-300 text-slate-800"
+                />
+                <label htmlFor="is_basonta" className="text-sm font-semibold text-slate-700 cursor-pointer">
+                  This member is also in a Basonta group
+                </label>
               </div>
             </div>
+
             <div className="flex gap-3 mt-8">
-              <button onClick={handleAddMember} disabled={!memberForm.name.trim()} className="flex-1 bg-slate-800 text-white py-3 rounded-lg font-semibold hover:bg-slate-700 transition-all disabled:bg-slate-300 disabled:cursor-not-allowed">Add Member</button>
-              <button onClick={() => setShowAddMember(false)} className="px-6 py-3 border-2 border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 font-semibold transition-all">Cancel</button>
+              <button
+                onClick={handleAddMember}
+                disabled={!newMemberForm.name.trim()}
+                className="flex-1 bg-slate-800 text-white py-3 rounded-lg font-semibold hover:bg-slate-700 transition-all disabled:bg-slate-300 disabled:cursor-not-allowed"
+              >
+                Add Member
+              </button>
+              <button
+                onClick={() => {
+                  setShowAddMember(false)
+                  setNewMemberForm({ name: '', phone: '', is_basonta_member: false })
+                }}
+                className="px-6 py-3 border-2 border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50 font-semibold transition-all"
+              >
+                Cancel
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Assign Shepherd Modal */}
-      {showAssignModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg border-2 border-slate-200 max-w-md w-full p-8 shadow-2xl">
-            <h2 className="text-2xl font-serif font-bold text-slate-800 mb-2">Assign Shepherd</h2>
-            <p className="text-slate-500 text-sm mb-8">Assign a church member to a shepherd</p>
-            <div className="space-y-5">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Member (Sheep)</label>
-                <select value={assignForm.member_id} onChange={e => setAssignForm({ ...assignForm, member_id: e.target.value })} className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors">
-                  <option value="">Select a member...</option>
-                  {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Shepherd</label>
-                <select value={assignForm.shepherd_id} onChange={e => setAssignForm({ ...assignForm, shepherd_id: e.target.value })} className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors">
-                  <option value="">Select a shepherd...</option>
-                  {shepherds.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Notes <span className="text-slate-400 font-normal normal-case">(optional)</span></label>
-                <textarea value={assignForm.notes} onChange={e => setAssignForm({ ...assignForm, notes: e.target.value })} placeholder="Any notes for the shepherd..." rows={3} className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 placeholder-slate-400 bg-white resize-none transition-colors" />
-              </div>
-            </div>
-            <div className="flex gap-3 mt-8">
-              <button onClick={handleAssignShepherd} disabled={!assignForm.member_id || !assignForm.shepherd_id} className="flex-1 bg-slate-800 text-white py-3 rounded-lg font-semibold hover:bg-slate-700 transition-all disabled:bg-slate-300 disabled:cursor-not-allowed">Assign</button>
-              <button onClick={() => setShowAssignModal(false)} className="px-6 py-3 border-2 border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 font-semibold transition-all">Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ── Log Meeting Modal ── */}
+      {showLogMeeting && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-lg border-2 border-slate-200 max-w-2xl w-full max-h-[90vh] overflow-y-auto p-8 shadow-2xl">
+            <h2 className="text-2xl font-serif font-bold text-slate-800 mb-2">Log Meeting</h2>
+            <p className="text-slate-500 text-sm mb-8">Record attendance and activities for this bacenta meeting</p>
 
-      {/* Assign Follow-Up Modal */}
-      {showFollowUpModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg border-2 border-slate-200 max-w-md w-full p-8 shadow-2xl">
-            <h2 className="text-2xl font-serif font-bold text-slate-800 mb-2">Assign Follow-Up</h2>
-            <p className="text-slate-500 text-sm mb-8">Assign a shepherd to follow up with a member</p>
             <div className="space-y-5">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Member</label>
-                <select value={followUpForm.member_id} onChange={e => setFollowUpForm({ ...followUpForm, member_id: e.target.value })} className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors">
-                  <option value="">Select a member...</option>
-                  {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                </select>
+                <label className="block text-sm font-semibold text-slate-700 mb-2 uppercase tracking-wide">
+                  Meeting Date
+                </label>
+                <input
+                  type="date"
+                  value={meetingForm.date}
+                  onChange={(e) => setMeetingForm({...meetingForm, date: e.target.value})}
+                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors"
+                />
               </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Shepherd</label>
-                <select value={followUpForm.shepherd_id} onChange={e => setFollowUpForm({ ...followUpForm, shepherd_id: e.target.value })} className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors">
-                  <option value="">Select a shepherd...</option>
-                  {shepherds.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2 uppercase tracking-wide">
+                    Attendance
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={meetingForm.attendance}
+                    onChange={(e) => setMeetingForm({...meetingForm, attendance: parseInt(e.target.value) || 0})}
+                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2 uppercase tracking-wide">
+                    First Timers
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={meetingForm.first_timers}
+                    onChange={(e) => setMeetingForm({...meetingForm, first_timers: parseInt(e.target.value) || 0})}
+                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors"
+                  />
+                </div>
               </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Due Date <span className="text-slate-400 font-normal normal-case">(optional)</span></label>
-                <input type="date" value={followUpForm.due_date} onChange={e => setFollowUpForm({ ...followUpForm, due_date: e.target.value })} className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors" />
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2 uppercase tracking-wide">
+                    Converts
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={meetingForm.converts}
+                    onChange={(e) => setMeetingForm({...meetingForm, converts: parseInt(e.target.value) || 0})}
+                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2 uppercase tracking-wide">
+                    Testimonies
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={meetingForm.testimonies_count}
+                    onChange={(e) => setMeetingForm({...meetingForm, testimonies_count: parseInt(e.target.value) || 0})}
+                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors"
+                  />
+                </div>
               </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2 uppercase tracking-wide">
+                    Coming Sunday
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={meetingForm.attendance_coming_sunday}
+                    onChange={(e) => setMeetingForm({...meetingForm, attendance_coming_sunday: parseInt(e.target.value) || 0})}
+                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors"
+                  />
+                  <p className="text-xs text-slate-500 mt-1">Planning to attend Sunday service</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2 uppercase tracking-wide">
+                    Absent but Coming
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={meetingForm.absent_but_coming_sunday}
+                    onChange={(e) => setMeetingForm({...meetingForm, absent_but_coming_sunday: parseInt(e.target.value) || 0})}
+                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors"
+                  />
+                  <p className="text-xs text-slate-500 mt-1">Absent today but coming Sunday</p>
+                </div>
+              </div>
+
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Instructions <span className="text-slate-400 font-normal normal-case">(optional)</span></label>
-                <textarea value={followUpForm.notes} onChange={e => setFollowUpForm({ ...followUpForm, notes: e.target.value })} placeholder="Instructions or context for the shepherd..." rows={3} className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 placeholder-slate-400 bg-white resize-none transition-colors" />
+                <label className="block text-sm font-semibold text-slate-700 mb-2 uppercase tracking-wide">
+                  Bacenta Picture <span className="text-slate-400 font-normal normal-case">(optional)</span>
+                </label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFileChange}
+                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200"
+                />
+                {picturePreview && (
+                  <div className="mt-4">
+                    <p className="text-sm text-slate-600 mb-2 font-semibold">Preview:</p>
+                    <img
+                      src={picturePreview}
+                      alt="Preview"
+                      className="max-w-full h-48 object-contain rounded-lg border-2 border-slate-300"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2 uppercase tracking-wide">
+                  Comments <span className="text-slate-400 font-normal normal-case">(optional)</span>
+                </label>
+                <textarea
+                  value={meetingForm.comments}
+                  onChange={(e) => setMeetingForm({...meetingForm, comments: e.target.value})}
+                  placeholder="Share highlights, testimonies, or notes about the meeting..."
+                  rows={4}
+                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white placeholder-slate-400 transition-colors resize-none"
+                />
               </div>
             </div>
+
             <div className="flex gap-3 mt-8">
-              <button onClick={handleAssignFollowUp} disabled={!followUpForm.member_id || !followUpForm.shepherd_id} className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-all disabled:bg-slate-300 disabled:cursor-not-allowed">Assign Follow-Up</button>
-              <button onClick={() => setShowFollowUpModal(false)} className="px-6 py-3 border-2 border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 font-semibold transition-all">Cancel</button>
+              <button
+                onClick={handleLogMeeting}
+                disabled={uploading}
+                className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-all shadow-lg disabled:bg-blue-300 disabled:cursor-not-allowed"
+              >
+                {uploading ? 'Uploading Picture...' : 'Log Meeting'}
+              </button>
+              <button
+                onClick={() => {
+                  setShowLogMeeting(false)
+                  setMeetingForm({
+                    date: new Date().toISOString().split('T')[0],
+                    attendance: 0,
+                    first_timers: 0,
+                    converts: 0,
+                    testimonies_count: 0,
+                    attendance_coming_sunday: 0,
+                    absent_but_coming_sunday: 0,
+                    comments: ''
+                  })
+                  setPictureFile(null)
+                  setPicturePreview(null)
+                }}
+                className="px-6 py-3 border-2 border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50 font-semibold transition-all"
+              >
+                Cancel
+              </button>
             </div>
           </div>
         </div>
