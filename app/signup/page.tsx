@@ -8,6 +8,7 @@ type Step = 'form' | 'success' | 'exists'
 
 const ROLE_OPTIONS = [
   { value: 'warrior', label: 'Prayer Warrior', description: 'Commit to and log prayer for submitted requests' },
+  { value: 'leader', label: 'Church Leader', description: 'Review and approve new user requests, manage members' },
   { value: 'basonta_shepherd', label: 'Basonta Shepherd', description: 'Lead a Basonta and track meetings' },
   { value: 'bacenta_leader', label: 'Bacenta Leader', description: 'Lead a Bacenta, manage members and log meetings' },
   { value: 'shepherd', label: 'Shepherd', description: 'Care for assigned church members and submit reports' },
