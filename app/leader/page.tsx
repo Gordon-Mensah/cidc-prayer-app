@@ -378,7 +378,7 @@ export default function LeaderDashboard() {
     setFollowUps(followData || [])
     const { data: shepherdData } = await supabase.from('users').select('id, name, email').eq('role', 'shepherd')
     setShepherds(shepherdData || [])
-    const { data: membersData } = await supabase.from('church_members').select('id, name').order('name')
+    const { data: membersData } = await supabase.from('church_members').select('*').order('name')
     setMembers(membersData || [])
   }
 
