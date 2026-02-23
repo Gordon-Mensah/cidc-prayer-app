@@ -50,8 +50,8 @@ export default function LoginPage() {
         router.push('/basonta')
       } else if (userData?.role === 'shepherd') {
         router.push('/shepherd')
-      } else if (userData?.role === 'bancenta_leader') {
-        router.push('/bancenta')
+      } else if (userData?.role === 'bacenta_leader') {
+        router.push('/bacenta')
       } else {
         throw new Error('Invalid user role. Please contact your administrator.')
       }
