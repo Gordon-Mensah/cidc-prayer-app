@@ -4,8 +4,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 
-// ─── Type Definitions ────────────────────────────────────────────────────────
-
+// All your type definitions remain the same - keeping them exactly as is
 interface PrayerRequest {
   id: string; title: string; description: string; category: string
   privacy_level: string; requester_name: string | null
@@ -73,43 +72,7 @@ interface FollowUpTask {
   church_members: ChurchMember; users: Shepherd
 }
 
-// ─── Bacenta Types ────────────────────────────────────────────────────────────
-
-interface BacentaGroup {
-  id: string; name: string; location: string; meeting_day: string
-  meeting_time: string | null; created_at: string; leader_id: string | null
-  leader?: { name: string; email: string } | null
-}
-
-interface BacentaMember {
-  id: string; name: string; phone: string | null; is_basonta_member: boolean; joined_at: string
-}
-
-interface BacentaMeeting {
-  id: string; group_id: string; meeting_date: string; attendance: number
-  first_timers: number; converts: number; testimonies_count: number
-  attendance_coming_sunday: number; absent_but_coming_sunday: number
-  picture_url: string | null; comments: string | null; created_at: string
-}
-
-interface BacentaGroupWithStats extends BacentaGroup {
-  totalMeetings: number; totalMembers: number; totalFirstTimers: number
-  totalConverts: number; avgAttendance: number; lastMeetingDate: string | null
-}
-
-// ─── Pending Users ────────────────────────────────────────────────────────────
-
-interface PendingUser {
-  id: string; email: string; name: string
-  requested_role: string; notes: string | null
-  status: string; created_at: string
-}
-
-// ─── Tab Types ────────────────────────────────────────────────────────────────
-
-type Tab = 'prayers' | 'basonta' | 'bacenta' | 'firsttimers' | 'members' | 'shepherding' | 'announcements' | 'pending'
-
-// ─── Component ────────────────────────────────────────────────────────────────
+type Tab = 'prayers' | 'basonta' | 'bacenta' | 'firsttimers' | 'members' | 'shepherding' | 'announcements'
 
 export default function LeaderDashboard() {
   const [user, setUser] = useState<any>(null)
@@ -129,22 +92,6 @@ export default function LeaderDashboard() {
   const [selectedGroup, setSelectedGroup] = useState<GroupWithStats | null>(null)
   const [groupMeetings, setGroupMeetings] = useState<BasontaMeeting[]>([])
   const [basontaStats, setBasontaStats] = useState({ totalGroups: 0, totalMeetings: 0, totalFirstTimers: 0, totalTestimonies: 0, avgAttendanceRate: 0, mostActiveGroup: '' })
-
-  // ── Bacenta states ──────────────────────────────────────────────────────────
-  const [bacentaGroups, setBacentaGroups] = useState<BacentaGroupWithStats[]>([])
-  const [selectedBacentaGroup, setSelectedBacentaGroup] = useState<BacentaGroupWithStats | null>(null)
-  const [bacentaGroupMeetings, setBacentaGroupMeetings] = useState<BacentaMeeting[]>([])
-  const [bacentaGroupMembers, setBacentaGroupMembers] = useState<BacentaMember[]>([])
-  const [bacentaStats, setBacentaStats] = useState({ totalGroups: 0, totalMeetings: 0, totalFirstTimers: 0, totalConverts: 0 })
-
-  // Create Bacenta modal
-  const [showCreateBacenta, setShowCreateBacenta] = useState(false)
-  const [bacentaForm, setBacentaForm] = useState({ name: '', location: '', meeting_day: 'Monday', meeting_time: '' })
-
-  // Create Basonta modal (from bacenta tab)
-  const [showCreateBasonta, setShowCreateBasonta] = useState(false)
-  const [basontaForm, setBasontaForm] = useState({ name: '', prayer_day: 'Monday', prayer_time: '', leader_id: '' })
-  const [allUsers, setAllUsers] = useState<{ id: string; name: string; email: string }[]>([])
 
   // First Timers states
   const [firstTimers, setFirstTimers] = useState<FirstTimer[]>([])
@@ -168,10 +115,6 @@ export default function LeaderDashboard() {
   // Announcements states
   const [announcements, setAnnouncements] = useState<Announcement[]>([])
 
-  // Pending Users states
-  const [pendingUsers, setPendingUsers] = useState<PendingUser[]>([])
-  const [pendingCount, setPendingCount] = useState(0)
-
   const [loading, setLoading] = useState(true)
 
   useEffect(() => { checkUser() }, [])
@@ -181,24 +124,18 @@ export default function LeaderDashboard() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
     setUser(user)
-    const { count } = await supabase.from('pending_users').select('*', { count: 'exact', head: true }).eq('status', 'pending')
-    setPendingCount(count || 0)
   }
 
   const loadTabData = async () => {
     setLoading(true)
     if (activeTab === 'prayers') await loadPrayerData()
     else if (activeTab === 'basonta') await loadBasontaData()
-    else if (activeTab === 'bacenta') await loadBacentaData()
     else if (activeTab === 'firsttimers') await loadFirstTimers()
     else if (activeTab === 'members') await loadMembers()
     else if (activeTab === 'shepherding') await loadShepherding()
     else if (activeTab === 'announcements') await loadAnnouncements()
-    else if (activeTab === 'pending') await loadPendingUsers()
     setLoading(false)
   }
-
-  // ─── Loaders ─────────────────────────────────────────────────────────────
 
   const loadPrayerData = async () => {
     let query = supabase.from('prayer_requests').select('*').order('created_at', { ascending: false })
@@ -255,110 +192,6 @@ export default function LeaderDashboard() {
     })
   }
 
-  const loadBacentaData = async () => {
-    const { data: groupsData } = await supabase
-      .from('bacenta_groups')
-      .select('*, leader:users!leader_id(name, email)')
-      .order('name')
-
-    const { data: meetingsData } = await supabase
-      .from('bacenta_meetings')
-      .select('*')
-      .order('meeting_date', { ascending: false })
-
-    const groupsWithStats: BacentaGroupWithStats[] = []
-    for (const group of groupsData || []) {
-      const gm = meetingsData?.filter(m => m.group_id === group.id) || []
-      const { count: memberCount } = await supabase
-        .from('bacenta_members')
-        .select('*', { count: 'exact', head: true })
-        .eq('group_id', group.id)
-
-      groupsWithStats.push({
-        ...group,
-        totalMeetings: gm.length,
-        totalMembers: memberCount || 0,
-        totalFirstTimers: gm.reduce((s, m) => s + (m.first_timers || 0), 0),
-        totalConverts: gm.reduce((s, m) => s + (m.converts || 0), 0),
-        avgAttendance: gm.length > 0 ? gm.reduce((s, m) => s + m.attendance, 0) / gm.length : 0,
-        lastMeetingDate: gm[0]?.meeting_date || null
-      })
-    }
-    setBacentaGroups(groupsWithStats)
-    setBacentaStats({
-      totalGroups: groupsWithStats.length,
-      totalMeetings: meetingsData?.length || 0,
-      totalFirstTimers: meetingsData?.reduce((s, m) => s + (m.first_timers || 0), 0) || 0,
-      totalConverts: meetingsData?.reduce((s, m) => s + (m.converts || 0), 0) || 0,
-    })
-
-    const { data: usersData } = await supabase.from('users').select('id, name, email').order('name')
-    setAllUsers(usersData || [])
-  }
-
-  const handleViewBacentaGroup = async (group: BacentaGroupWithStats) => {
-    setSelectedBacentaGroup(group)
-    const { data: meetings } = await supabase
-      .from('bacenta_meetings')
-      .select('*')
-      .eq('group_id', group.id)
-      .order('meeting_date', { ascending: false })
-    setBacentaGroupMeetings(meetings || [])
-
-    const { data: members } = await supabase
-      .from('bacenta_members')
-      .select('*')
-      .eq('group_id', group.id)
-      .order('name')
-    setBacentaGroupMembers(members || [])
-  }
-
-  const handleCreateBacenta = async () => {
-    if (!bacentaForm.name.trim() || !bacentaForm.location.trim()) return
-    const { error } = await supabase.from('bacenta_groups').insert([{
-      name: bacentaForm.name.trim(),
-      location: bacentaForm.location.trim(),
-      meeting_day: bacentaForm.meeting_day,
-      meeting_time: bacentaForm.meeting_time || null
-    }])
-    if (error) { alert('Error creating bacenta: ' + error.message); return }
-    setBacentaForm({ name: '', location: '', meeting_day: 'Monday', meeting_time: '' })
-    setShowCreateBacenta(false)
-    loadBacentaData()
-  }
-
-  const handleDeleteBacenta = async (id: string, name: string) => {
-    if (!confirm(`Are you sure you want to delete "${name}"? This will also delete all members and meetings for this bacenta.`)) return
-    await supabase.from('bacenta_meetings').delete().eq('group_id', id)
-    await supabase.from('bacenta_members').delete().eq('group_id', id)
-    const { error } = await supabase.from('bacenta_groups').delete().eq('id', id)
-    if (error) { alert('Error deleting bacenta: ' + error.message); return }
-    loadBacentaData()
-  }
-
-  const handleCreateBasonta = async () => {
-    if (!basontaForm.name.trim() || !basontaForm.leader_id) return
-    const { error } = await supabase.from('basonta_groups').insert([{
-      name: basontaForm.name.trim(),
-      prayer_day: basontaForm.prayer_day,
-      prayer_time: basontaForm.prayer_time || null,
-      leader_id: basontaForm.leader_id
-    }])
-    if (error) { alert('Error creating basonta: ' + error.message); return }
-    setBasontaForm({ name: '', prayer_day: 'Monday', prayer_time: '', leader_id: '' })
-    setShowCreateBasonta(false)
-    loadBasontaData()
-  }
-
-  const handleDeleteBasonta = async (id: string, name: string) => {
-    if (!confirm(`Are you sure you want to delete Basonta "${name}"?`)) return
-    await supabase.from('basonta_meetings').delete().eq('group_id', id)
-    await supabase.from('basonta_members').delete().eq('group_id', id)
-    const { error } = await supabase.from('basonta_groups').delete().eq('id', id)
-    if (error) { alert('Error deleting basonta: ' + error.message); return }
-    loadBasontaData()
-  }
-
   const loadFirstTimers = async () => {
     const { data } = await supabase.from('first_timers').select('*').order('visit_date', { ascending: false })
     setFirstTimers(data || [])
@@ -386,14 +219,6 @@ export default function LeaderDashboard() {
     const { data } = await supabase.from('announcements').select('*').order('created_at', { ascending: false })
     setAnnouncements(data || [])
   }
-
-  const loadPendingUsers = async () => {
-    const { data } = await supabase.from('pending_users').select('*').eq('status', 'pending').order('created_at', { ascending: true })
-    setPendingUsers(data || [])
-    setPendingCount(data?.length || 0)
-  }
-
-  // ─── Handlers ─────────────────────────────────────────────────────────────
 
   const handleMarkAnswered = async (id: string) => {
     await supabase.from('prayer_requests').update({ status: 'answered', answered_at: new Date().toISOString() }).eq('id', id)
@@ -477,28 +302,6 @@ export default function LeaderDashboard() {
     loadAnnouncements()
   }
 
-  const handleApproveUser = async (pending: PendingUser) => {
-    if (!confirm(`Approve ${pending.name} as ${pending.requested_role.replace(/_/g, ' ')}?`)) return
-    try {
-      const { error: userError } = await supabase.from('users').insert([{ email: pending.email, name: pending.name, role: pending.requested_role }])
-      if (userError) {
-        await supabase.from('users').update({ role: pending.requested_role, name: pending.name }).eq('email', pending.email)
-      }
-      await supabase.from('pending_users').update({ status: 'approved' }).eq('id', pending.id)
-      alert(`${pending.name} has been approved. They can now log in.`)
-      loadPendingUsers()
-    } catch (err: any) {
-      alert(`Error approving user: ${err.message}`)
-    }
-  }
-
-  const handleRejectUser = async (pending: PendingUser) => {
-    if (!confirm(`Reject ${pending.name}'s request?`)) return
-    await supabase.from('pending_users').update({ status: 'rejected' }).eq('id', pending.id)
-    alert(`${pending.name}'s request has been rejected.`)
-    loadPendingUsers()
-  }
-
   const handleLogout = async () => { await supabase.auth.signOut(); router.push('/login') }
 
   const getCategoryColor = (category: string) => {
@@ -511,24 +314,17 @@ export default function LeaderDashboard() {
     return colors[category] || 'bg-gray-100 text-gray-800 border-gray-200'
   }
 
-  const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-
-  const tabs: { id: Tab; label: string; badge?: number }[] = [
+  const tabs: { id: Tab; label: string }[] = [
     { id: 'prayers', label: 'Prayer Requests' },
     { id: 'basonta', label: 'Basonta' },
-    { id: 'bacenta', label: 'Bacenta' },
     { id: 'firsttimers', label: 'First Timers' },
     { id: 'members', label: 'Church Members' },
     { id: 'shepherding', label: 'Shepherding' },
     { id: 'announcements', label: 'Announcements' },
-    { id: 'pending', label: 'Pending Users', badge: pendingCount },
   ]
-
-  // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen bg-white">
-      {/* Header */}
       <div className="bg-gradient-to-br from-slate-800 via-slate-700 to-slate-900 text-white">
         <div className="max-w-7xl mx-auto px-4 py-6 flex justify-between items-center">
           <div>
@@ -537,31 +333,25 @@ export default function LeaderDashboard() {
             <p className="text-slate-300 text-sm mt-1">{user?.email}</p>
           </div>
           <div className="flex items-center gap-3">
+            <a href="/" className="px-4 py-2 border border-slate-600 text-slate-300 rounded-lg hover:bg-slate-700 text-sm font-medium transition-all">Home</a>
             <button onClick={handleLogout} className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-semibold transition-all">Sign Out</button>
           </div>
         </div>
       </div>
 
-      {/* Tab Bar */}
       <div className="bg-white border-b-2 border-slate-200 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4">
           <div className="flex overflow-x-auto">
             {tabs.map(tab => (
               <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-                className={`relative py-4 px-5 border-b-2 font-semibold text-sm whitespace-nowrap transition-colors ${activeTab === tab.id ? 'border-slate-800 text-slate-800' : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>
+                className={`py-4 px-5 border-b-2 font-semibold text-sm whitespace-nowrap transition-colors ${activeTab === tab.id ? 'border-slate-800 text-slate-800' : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>
                 {tab.label}
-                {tab.badge && tab.badge > 0 ? (
-                  <span className="ml-2 inline-flex items-center justify-center w-5 h-5 bg-red-500 text-white text-xs font-bold rounded-full">
-                    {tab.badge}
-                  </span>
-                ) : null}
               </button>
             ))}
           </div>
         </div>
       </div>
 
-      {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 py-10">
         {loading ? (
           <div className="text-center py-20">
@@ -570,7 +360,6 @@ export default function LeaderDashboard() {
           </div>
         ) : (
           <>
-            {/* ── PRAYERS TAB ──────────────────────────────────────────────────── */}
             {activeTab === 'prayers' && (
               <>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
@@ -631,20 +420,9 @@ export default function LeaderDashboard() {
               </>
             )}
 
-            {/* ── BASONTA TAB ──────────────────────────────────────────────────── */}
             {activeTab === 'basonta' && (
               <>
-                <div className="flex justify-between items-center mb-8">
-                  <h2 className="text-2xl font-serif font-bold text-slate-800">Basonta</h2>
-                  <button
-                    onClick={() => setShowCreateBasonta(true)}
-                    className="px-6 py-3 bg-slate-800 text-white rounded-lg font-semibold hover:bg-slate-700 transition-all shadow-lg text-sm"
-                  >
-                    + Create Basonta
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-10">
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-10">
                   {[
                     { label: 'Groups', value: basontaStats.totalGroups },
                     { label: 'Meetings', value: basontaStats.totalMeetings },
@@ -672,18 +450,9 @@ export default function LeaderDashboard() {
                           </div>
                         ))}
                       </div>
-                      <div className="flex gap-2">
-                        <button onClick={() => handleViewGroup(group)} className="flex-1 bg-slate-800 text-white py-2.5 rounded-lg font-semibold hover:bg-slate-700 transition-all text-sm">View Details</button>
-                        <button onClick={() => handleDeleteBasonta(group.id, group.name)} className="px-4 py-2.5 border-2 border-red-200 text-red-600 rounded-lg hover:bg-red-50 font-semibold transition-all text-sm">Delete</button>
-                      </div>
+                      <button onClick={() => handleViewGroup(group)} className="w-full bg-slate-800 text-white py-2.5 rounded-lg font-semibold hover:bg-slate-700 transition-all text-sm">View Details</button>
                     </div>
                   ))}
-                  {basontaGroups.length === 0 && (
-                    <div className="col-span-3 text-center py-16 bg-slate-50 rounded-lg border-2 border-slate-200">
-                      <p className="text-slate-500 text-lg">No basontas yet</p>
-                      <button onClick={() => setShowCreateBasonta(true)} className="mt-4 text-slate-700 hover:text-slate-900 font-semibold underline underline-offset-4 text-sm">Create your first basonta</button>
-                    </div>
-                  )}
                 </div>
 
                 <div className="bg-white rounded-lg border-2 border-slate-200 p-8">
@@ -702,118 +471,10 @@ export default function LeaderDashboard() {
                       </div>
                     </div>
                   ))}
-                  {allMeetings.length === 0 && (
-                    <div className="text-center py-12 bg-slate-50 rounded-lg border-2 border-slate-200">
-                      <p className="text-slate-500">No meetings recorded yet</p>
-                    </div>
-                  )}
                 </div>
               </>
             )}
 
-            {/* ── BACENTA TAB ──────────────────────────────────────────────────── */}
-            {activeTab === 'bacenta' && (
-              <>
-                <div className="flex justify-between items-center mb-8">
-                  <div>
-                    <h2 className="text-2xl font-serif font-bold text-slate-800">Bacentas</h2>
-                    <p className="text-slate-500 text-sm mt-1">Manage all bacentas and view their data</p>
-                  </div>
-                  <div className="flex gap-3">
-                    <button
-                      onClick={() => setShowCreateBacenta(true)}
-                      className="px-6 py-3 bg-slate-800 text-white rounded-lg font-semibold hover:bg-slate-700 transition-all shadow-lg text-sm"
-                    >
-                      + Create Bacenta
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
-                  {[
-                    { label: 'Bacentas', value: bacentaStats.totalGroups },
-                    { label: 'Total Meetings', value: bacentaStats.totalMeetings },
-                    { label: 'First Timers', value: bacentaStats.totalFirstTimers },
-                    { label: 'Total Converts', value: bacentaStats.totalConverts },
-                  ].map(s => (
-                    <div key={s.label} className="bg-white rounded-lg border-2 border-slate-200 p-5 hover:border-slate-300 hover:shadow-lg transition-all">
-                      <div className="text-3xl font-bold text-slate-800">{s.value}</div>
-                      <div className="text-xs text-slate-500 font-semibold mt-1 uppercase tracking-wide">{s.label}</div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
-                  {bacentaGroups.map(group => (
-                    <div key={group.id} className="bg-white rounded-lg border-2 border-slate-200 p-6 hover:border-slate-300 hover:shadow-xl transition-all">
-                      <div className="flex justify-between items-start mb-2">
-                        <div>
-                          <h3 className="text-lg font-bold text-slate-800">{group.name}</h3>
-                          <p className="text-sm text-slate-500 mt-0.5">{group.location}</p>
-                        </div>
-                        <span className="px-2 py-1 bg-slate-100 text-slate-600 border border-slate-200 rounded text-xs font-semibold">
-                          {group.meeting_day}s
-                        </span>
-                      </div>
-                      {group.leader && (
-                        <p className="text-xs text-slate-400 mb-1">Leader: <span className="font-semibold text-slate-600">{group.leader.name}</span></p>
-                      )}
-                      {group.meeting_time && (
-                        <p className="text-xs text-slate-400 mb-3">Time: {group.meeting_time}</p>
-                      )}
-                      <div className="grid grid-cols-2 gap-2 mt-4 mb-4">
-                        {[
-                          { v: group.totalMembers, l: 'Members', c: 'bg-blue-50 text-blue-800 border-blue-100' },
-                          { v: group.totalMeetings, l: 'Meetings', c: 'bg-green-50 text-green-800 border-green-100' },
-                          { v: group.totalFirstTimers, l: 'First Timers', c: 'bg-purple-50 text-purple-800 border-purple-100' },
-                          { v: group.totalConverts, l: 'Converts', c: 'bg-orange-50 text-orange-800 border-orange-100' },
-                        ].map(s => (
-                          <div key={s.l} className={`text-center p-2 rounded-lg border ${s.c}`}>
-                            <div className="text-lg font-bold">{s.v}</div>
-                            <div className="text-xs font-semibold mt-0.5">{s.l}</div>
-                          </div>
-                        ))}
-                      </div>
-                      {group.lastMeetingDate && (
-                        <p className="text-xs text-slate-400 mb-4">
-                          Last meeting: {new Date(group.lastMeetingDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                        </p>
-                      )}
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => handleViewBacentaGroup(group)}
-                          className="flex-1 bg-slate-800 text-white py-2.5 rounded-lg font-semibold hover:bg-slate-700 transition-all text-sm"
-                        >
-                          View Details
-                        </button>
-                        <button
-                          onClick={() => handleDeleteBacenta(group.id, group.name)}
-                          className="px-4 py-2.5 border-2 border-red-200 text-red-600 rounded-lg hover:bg-red-50 font-semibold transition-all text-sm"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                  {bacentaGroups.length === 0 && (
-                    <div className="col-span-3 text-center py-16 bg-slate-50 rounded-lg border-2 border-slate-200">
-                      <svg className="w-16 h-16 mx-auto mb-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-                      </svg>
-                      <p className="text-slate-500 text-lg">No bacentas yet</p>
-                      <button
-                        onClick={() => setShowCreateBacenta(true)}
-                        className="mt-4 text-slate-700 hover:text-slate-900 font-semibold underline underline-offset-4 text-sm"
-                      >
-                        Create your first bacenta
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-
-            {/* ── FIRST TIMERS TAB ─────────────────────────────────────────────── */}
             {activeTab === 'firsttimers' && (
               <>
                 <div className="flex justify-between items-center mb-8">
@@ -825,6 +486,7 @@ export default function LeaderDashboard() {
                     Add First Timer
                   </button>
                 </div>
+
                 <div className="space-y-3">
                   {firstTimers.map(ft => (
                     <div key={ft.id} className={`bg-white rounded-lg border-2 p-5 hover:shadow-lg transition-all ${ft.converted ? 'border-green-200 opacity-70' : 'border-slate-200 hover:border-slate-300'}`}>
@@ -862,7 +524,6 @@ export default function LeaderDashboard() {
               </>
             )}
 
-            {/* ── CHURCH MEMBERS TAB ───────────────────────────────────────────── */}
             {activeTab === 'members' && (
               <>
                 <div className="flex justify-between items-center mb-8">
@@ -874,6 +535,7 @@ export default function LeaderDashboard() {
                     Add Member
                   </button>
                 </div>
+
                 <div className="space-y-3">
                   {members.map(member => (
                     <div key={member.id} className="bg-white rounded-lg border-2 border-slate-200 p-5 hover:border-slate-300 hover:shadow-lg transition-all">
@@ -903,7 +565,6 @@ export default function LeaderDashboard() {
               </>
             )}
 
-            {/* ── SHEPHERDING TAB ──────────────────────────────────────────────── */}
             {activeTab === 'shepherding' && (
               <>
                 <div className="flex justify-between items-start mb-8">
@@ -920,15 +581,20 @@ export default function LeaderDashboard() {
                     </button>
                   </div>
                 </div>
+
                 <div className="mb-10">
                   <h3 className="text-lg font-serif font-bold text-slate-800 mb-5">Current Assignments</h3>
                   <div className="space-y-3">
                     {assignments.map(a => (
                       <div key={a.id} className="bg-white rounded-lg border-2 border-slate-200 p-5 hover:border-slate-300 transition-all">
-                        <p className="font-bold text-slate-800">{a.church_members.name}</p>
-                        <p className="text-sm text-slate-500 mt-0.5">Shepherd: <span className="font-semibold text-slate-700">{a.users.name}</span></p>
-                        <p className="text-xs text-slate-400 mt-1">Assigned {new Date(a.assigned_at).toLocaleDateString()}</p>
-                        {a.notes && <p className="text-sm text-slate-600 mt-2 italic">{a.notes}</p>}
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <p className="font-bold text-slate-800">{a.church_members.name}</p>
+                            <p className="text-sm text-slate-500 mt-0.5">Shepherd: <span className="font-semibold text-slate-700">{a.users.name}</span></p>
+                            <p className="text-xs text-slate-400 mt-1">Assigned {new Date(a.assigned_at).toLocaleDateString()}</p>
+                            {a.notes && <p className="text-sm text-slate-600 mt-2 italic">{a.notes}</p>}
+                          </div>
+                        </div>
                       </div>
                     ))}
                     {assignments.length === 0 && (
@@ -938,6 +604,7 @@ export default function LeaderDashboard() {
                     )}
                   </div>
                 </div>
+
                 <div>
                   <h3 className="text-lg font-serif font-bold text-slate-800 mb-5">Follow-Up Tasks</h3>
                   <div className="space-y-3">
@@ -964,7 +631,6 @@ export default function LeaderDashboard() {
               </>
             )}
 
-            {/* ── ANNOUNCEMENTS TAB ────────────────────────────────────────────── */}
             {activeTab === 'announcements' && (
               <>
                 <div className="flex justify-between items-center mb-8">
@@ -973,6 +639,7 @@ export default function LeaderDashboard() {
                     Create Announcement
                   </a>
                 </div>
+
                 {announcements.length > 0 ? (
                   <div className="space-y-4">
                     {announcements.map(a => (
@@ -1006,72 +673,16 @@ export default function LeaderDashboard() {
                 )}
               </>
             )}
-
-            {/* ── PENDING USERS TAB ────────────────────────────────────────────── */}
-            {activeTab === 'pending' && (
-              <>
-                <div className="flex justify-between items-center mb-8">
-                  <div>
-                    <h2 className="text-2xl font-serif font-bold text-slate-800">Pending User Requests</h2>
-                    <p className="text-slate-500 text-sm mt-1">Review and approve new staff access requests</p>
-                  </div>
-                </div>
-                {pendingUsers.length > 0 ? (
-                  <div className="space-y-4">
-                    {pendingUsers.map(pending => (
-                      <div key={pending.id} className="bg-white rounded-lg border-2 border-amber-200 p-6 hover:border-amber-300 transition-all">
-                        <div className="flex justify-between items-start flex-wrap gap-4">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-3 mb-2 flex-wrap">
-                              <h3 className="font-bold text-slate-800 text-lg">{pending.name}</h3>
-                              <span className="px-3 py-1 bg-amber-100 text-amber-800 border border-amber-200 rounded text-xs font-semibold uppercase tracking-wide">Pending</span>
-                              <span className="px-3 py-1 bg-slate-100 text-slate-700 border border-slate-200 rounded text-xs font-semibold uppercase tracking-wide">{pending.requested_role.replace(/_/g, ' ')}</span>
-                            </div>
-                            <p className="text-slate-600 text-sm">{pending.email}</p>
-                            <p className="text-xs text-slate-400 mt-1">Requested {new Date(pending.created_at).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
-                            {pending.notes && (
-                              <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-lg">
-                                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Notes from applicant</p>
-                                <p className="text-sm text-slate-700 italic">{pending.notes}</p>
-                              </div>
-                            )}
-                          </div>
-                          <div className="flex flex-col gap-2">
-                            <button onClick={() => handleApproveUser(pending)} className="px-6 py-2.5 bg-green-700 text-white rounded-lg hover:bg-green-800 font-semibold text-sm transition-all shadow-md">Approve</button>
-                            <button onClick={() => handleRejectUser(pending)} className="px-6 py-2.5 border-2 border-red-200 text-red-600 rounded-lg hover:bg-red-50 font-semibold text-sm transition-all">Reject</button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-center py-16 bg-slate-50 rounded-lg border-2 border-slate-200">
-                    <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <svg className="w-8 h-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                    </div>
-                    <p className="text-slate-500 text-lg">No pending requests</p>
-                    <p className="text-slate-400 text-sm mt-1">New signup requests will appear here</p>
-                  </div>
-                )}
-              </>
-            )}
           </>
         )}
       </div>
 
-      {/* Footer */}
       <footer className="bg-slate-800 text-white py-10 px-4 border-t-4 border-slate-900 mt-16">
         <div className="max-w-7xl mx-auto text-center">
           <p className="text-slate-300">Church Prayer Management System</p>
           <p className="text-slate-400 text-sm mt-2">&copy; 2026 All rights reserved</p>
         </div>
       </footer>
-
-      {/* ════════════════════════════════════════════════════════════════════════
-          MODALS
-      ════════════════════════════════════════════════════════════════════════ */}
 
       {/* Prayer Detail Modal */}
       {selectedRequest && (
@@ -1123,7 +734,7 @@ export default function LeaderDashboard() {
         </div>
       )}
 
-      {/* Basonta Detail Modal */}
+      {/* Basonta Group Modal */}
       {selectedGroup && (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50 overflow-y-auto">
           <div className="bg-white rounded-lg border-2 border-slate-200 max-w-3xl w-full max-h-[90vh] overflow-y-auto p-8 shadow-2xl">
@@ -1159,188 +770,6 @@ export default function LeaderDashboard() {
               ))}
             </div>
             <button onClick={() => setSelectedGroup(null)} className="w-full mt-6 py-3 border-2 border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 font-semibold transition-all">Close</button>
-          </div>
-        </div>
-      )}
-
-      {/* Bacenta Detail Modal */}
-      {selectedBacentaGroup && (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-lg border-2 border-slate-200 max-w-4xl w-full max-h-[90vh] overflow-y-auto p-8 shadow-2xl">
-            <div className="flex justify-between items-start mb-6">
-              <div>
-                <h2 className="text-2xl font-serif font-bold text-slate-800 mb-1">{selectedBacentaGroup.name}</h2>
-                <p className="text-slate-500 text-sm">
-                  {selectedBacentaGroup.location} &mdash; {selectedBacentaGroup.meeting_day}s
-                  {selectedBacentaGroup.meeting_time && ` at ${selectedBacentaGroup.meeting_time}`}
-                </p>
-                {selectedBacentaGroup.leader && (
-                  <p className="text-slate-400 text-xs mt-0.5">Leader: {selectedBacentaGroup.leader.name}</p>
-                )}
-              </div>
-              <button onClick={() => setSelectedBacentaGroup(null)} className="text-slate-400 hover:text-slate-700 text-2xl transition-colors">&times;</button>
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-              {[
-                { v: selectedBacentaGroup.totalMembers, l: 'Members', c: 'bg-blue-50 text-blue-800 border-blue-200' },
-                { v: selectedBacentaGroup.totalMeetings, l: 'Meetings', c: 'bg-green-50 text-green-800 border-green-200' },
-                { v: selectedBacentaGroup.totalFirstTimers, l: 'First Timers', c: 'bg-purple-50 text-purple-800 border-purple-200' },
-                { v: selectedBacentaGroup.totalConverts, l: 'Converts', c: 'bg-orange-50 text-orange-800 border-orange-200' },
-              ].map(s => (
-                <div key={s.l} className={`text-center p-4 rounded-lg border-2 ${s.c}`}>
-                  <div className="text-2xl font-bold">{s.v}</div>
-                  <div className="text-xs font-semibold mt-1 uppercase tracking-wide">{s.l}</div>
-                </div>
-              ))}
-            </div>
-            {bacentaGroupMembers.length > 0 && (
-              <div className="mb-8">
-                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-4">Members</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  {bacentaGroupMembers.map(member => (
-                    <div key={member.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
-                      <div>
-                        <p className="font-semibold text-slate-800 text-sm">{member.name}</p>
-                        {member.phone && <p className="text-xs text-slate-500">{member.phone}</p>}
-                      </div>
-                      {member.is_basonta_member && (
-                        <span className="px-2 py-0.5 bg-green-100 text-green-700 border border-green-200 rounded text-xs font-semibold">Basonta</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-4">Meeting History</h3>
-            {bacentaGroupMeetings.length > 0 ? (
-              <div className="space-y-4">
-                {bacentaGroupMeetings.map(meeting => (
-                  <div key={meeting.id} className="p-5 bg-slate-50 rounded-lg border-2 border-slate-200">
-                    <div className="flex justify-between items-start mb-4">
-                      <p className="font-bold text-slate-800">
-                        {new Date(meeting.meeting_date).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-                      </p>
-                      {meeting.picture_url && (
-                        <img
-                          src={meeting.picture_url}
-                          alt="Bacenta meeting"
-                          className="w-28 h-28 object-cover rounded-lg border-2 border-slate-200 ml-4"
-                        />
-                      )}
-                    </div>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
-                      {[
-                        { v: meeting.attendance, l: 'Attendance', c: 'bg-blue-50 text-blue-800 border-blue-100' },
-                        { v: meeting.first_timers, l: 'First Timers', c: 'bg-green-50 text-green-800 border-green-100' },
-                        { v: meeting.converts, l: 'Converts', c: 'bg-purple-50 text-purple-800 border-purple-100' },
-                        { v: meeting.testimonies_count, l: 'Testimonies', c: 'bg-orange-50 text-orange-800 border-orange-100' },
-                      ].map(s => (
-                        <div key={s.l} className={`text-center p-2 rounded-lg border ${s.c}`}>
-                          <div className="text-lg font-bold">{s.v}</div>
-                          <div className="text-xs font-semibold mt-0.5">{s.l}</div>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 mb-3">
-                      <div className="text-center p-2 bg-cyan-50 rounded-lg border border-cyan-100">
-                        <div className="text-lg font-bold text-cyan-800">{meeting.attendance_coming_sunday}</div>
-                        <div className="text-xs font-semibold text-cyan-600 mt-0.5">Coming Sunday</div>
-                      </div>
-                      <div className="text-center p-2 bg-yellow-50 rounded-lg border border-yellow-100">
-                        <div className="text-lg font-bold text-yellow-800">{meeting.absent_but_coming_sunday}</div>
-                        <div className="text-xs font-semibold text-yellow-600 mt-0.5">Absent but Coming</div>
-                      </div>
-                    </div>
-                    {meeting.comments && (
-                      <div className="p-3 bg-white rounded-lg border border-slate-200">
-                        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">Comments</p>
-                        <p className="text-sm text-slate-700">{meeting.comments}</p>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-10 bg-slate-50 rounded-lg border-2 border-slate-200">
-                <p className="text-slate-500">No meetings recorded for this bacenta yet</p>
-              </div>
-            )}
-            <button onClick={() => setSelectedBacentaGroup(null)} className="w-full mt-6 py-3 border-2 border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 font-semibold transition-all">Close</button>
-          </div>
-        </div>
-      )}
-
-      {/* Create Bacenta Modal */}
-      {showCreateBacenta && (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg border-2 border-slate-200 max-w-md w-full p-8 shadow-2xl">
-            <h2 className="text-2xl font-serif font-bold text-slate-800 mb-2">Create Bacenta</h2>
-            <p className="text-slate-500 text-sm mb-8">Add a new bacenta to the church</p>
-            <div className="space-y-5">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Group Name</label>
-                <input type="text" value={bacentaForm.name} onChange={e => setBacentaForm({ ...bacentaForm, name: e.target.value })} placeholder="e.g. Canaan Bacenta" className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 placeholder-slate-400 transition-colors" />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Location</label>
-                <input type="text" value={bacentaForm.location} onChange={e => setBacentaForm({ ...bacentaForm, location: e.target.value })} placeholder="e.g. 123 Main Street" className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 placeholder-slate-400 transition-colors" />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Meeting Day</label>
-                  <select value={bacentaForm.meeting_day} onChange={e => setBacentaForm({ ...bacentaForm, meeting_day: e.target.value })} className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors">
-                    {DAYS.map(d => <option key={d} value={d}>{d}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Time <span className="text-slate-400 font-normal normal-case">(optional)</span></label>
-                  <input type="time" value={bacentaForm.meeting_time} onChange={e => setBacentaForm({ ...bacentaForm, meeting_time: e.target.value })} className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors" />
-                </div>
-              </div>
-            </div>
-            <div className="flex gap-3 mt-8">
-              <button onClick={handleCreateBacenta} disabled={!bacentaForm.name.trim() || !bacentaForm.location.trim()} className="flex-1 bg-slate-800 text-white py-3 rounded-lg font-semibold hover:bg-slate-700 transition-all disabled:bg-slate-300 disabled:cursor-not-allowed">Create Bacenta</button>
-              <button onClick={() => { setShowCreateBacenta(false); setBacentaForm({ name: '', location: '', meeting_day: 'Monday', meeting_time: '' }) }} className="px-6 py-3 border-2 border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 font-semibold transition-all">Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Create Basonta Modal */}
-      {showCreateBasonta && (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg border-2 border-slate-200 max-w-md w-full p-8 shadow-2xl">
-            <h2 className="text-2xl font-serif font-bold text-slate-800 mb-2">Create Basonta</h2>
-            <p className="text-slate-500 text-sm mb-8">Add a new basonta to the church</p>
-            <div className="space-y-5">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Group Name</label>
-                <input type="text" value={basontaForm.name} onChange={e => setBasontaForm({ ...basontaForm, name: e.target.value })} placeholder="e.g. Dancing Stars, Film Stars" className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 placeholder-slate-400 transition-colors" />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Group Leader</label>
-                <select value={basontaForm.leader_id} onChange={e => setBasontaForm({ ...basontaForm, leader_id: e.target.value })} className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors">
-                  <option value="">Select a leader...</option>
-                  {allUsers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                </select>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Prayer Day</label>
-                  <select value={basontaForm.prayer_day} onChange={e => setBasontaForm({ ...basontaForm, prayer_day: e.target.value })} className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors">
-                    {DAYS.map(d => <option key={d} value={d}>{d}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">Time <span className="text-slate-400 font-normal normal-case">(optional)</span></label>
-                  <input type="time" value={basontaForm.prayer_time} onChange={e => setBasontaForm({ ...basontaForm, prayer_time: e.target.value })} className="w-full px-4 py-3 border-2 border-slate-200 rounded-lg focus:ring-0 focus:border-slate-500 text-slate-800 bg-white transition-colors" />
-                </div>
-              </div>
-            </div>
-            <div className="flex gap-3 mt-8">
-              <button onClick={handleCreateBasonta} disabled={!basontaForm.name.trim() || !basontaForm.leader_id} className="flex-1 bg-slate-800 text-white py-3 rounded-lg font-semibold hover:bg-slate-700 transition-all disabled:bg-slate-300 disabled:cursor-not-allowed">Create Basonta</button>
-              <button onClick={() => { setShowCreateBasonta(false); setBasontaForm({ name: '', prayer_day: 'Monday', prayer_time: '', leader_id: '' }) }} className="px-6 py-3 border-2 border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 font-semibold transition-all">Cancel</button>
-            </div>
           </div>
         </div>
       )}

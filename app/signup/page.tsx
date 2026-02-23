@@ -8,7 +8,8 @@ type Step = 'form' | 'success' | 'exists'
 
 const ROLE_OPTIONS = [
   { value: 'warrior', label: 'Prayer Warrior', description: 'Commit to and log prayer for submitted requests' },
-  { value: 'basonta_shepherd', label: 'Basonta Shepherd', description: 'Lead a Basonta prayer group and track meetings' },
+  { value: 'basonta_shepherd', label: 'Basonta Shepherd', description: 'Lead a Basonta and track meetings' },
+  { value: 'bacenta_leader', label: 'Bacenta Leader', description: 'Lead a Bacenta, manage members and log meetings' },
   { value: 'shepherd', label: 'Shepherd', description: 'Care for assigned church members and submit reports' },
 ]
 
@@ -42,7 +43,7 @@ export default function SignupPage() {
     setLoading(true)
 
     try {
-      // 1. Check if already pending
+      // 1. Check if already pending here
       const { data: existing } = await supabase
         .from('pending_users')
         .select('id, status')
