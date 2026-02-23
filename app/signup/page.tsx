@@ -69,34 +69,34 @@ export default function SignupPage() {
         return
       }
 
-      // 3. Create Supabase Auth account (password is salted + hashed by Supabase/bcrypt automatically)
-      const { data: authData, error: authError } = await supabase.auth.signUp({
+        // 3. Create Supabase Auth account
+        const { data: authData, error: authError } = await supabase.auth.signUp({
         email: form.email.toLowerCase().trim(),
         password: form.password,
         options: {
-          data: {
-            name: form.name.trim(),
-          }
+            data: { name: form.name.trim() }
         }
-      })
+        })
 
-      if (authError) throw authError
+        if (authError) throw authError
+        if (!authData.user) throw new Error('Failed to create auth account.')
 
-      // 4. Create user record immediately (but with 'pending' role)
-      const { error: userError } = await supabase
+        // 4. Create user record (with 'pending' role)
+        const { error: userError } = await supabase
         .from('users')
         .insert([{
-            id: authData.user?.id,
+            id: authData.user.id,
             email: form.email.toLowerCase().trim(),
             name: form.name.trim(),
             role: 'pending',
         }])
 
-     if (userError && userError.code !== '23505') {
-       // Clean up the auth account since user row failed
-       await supabase.auth.signOut()
-       throw new Error('Failed to create user record. Please try again.')
-      }
+        if (userError) {
+        console.error('User insert failed:', userError)
+        // Clean up the auth user so they can try again
+        await supabase.auth.signOut()
+        throw new Error(`Account setup failed: ${userError.message}`)
+        }
 
         // 5. Insert into pending_users for leader approval
         const { error: pendingError } = await supabase
@@ -108,6 +108,11 @@ export default function SignupPage() {
             notes: form.notes.trim() || null,
             status: 'pending',
         }])
+
+        if (pendingError) {
+        console.error('Pending insert failed:', pendingError)
+        // Don't block the user — user record was created successfully
+        }
 
       // 5. Sign them back out — they can't use the app until leader approves
       await supabase.auth.signOut()
