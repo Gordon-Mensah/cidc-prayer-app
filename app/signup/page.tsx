@@ -82,18 +82,30 @@ export default function SignupPage() {
 
       if (authError) throw authError
 
-      // 4. Insert into pending_users for leader approval
-      const { error: pendingError } = await supabase
-        .from('pending_users')
+      // 4. Create user record immediately (but with 'pending' role)
+        const { error: userError } = await supabase
+        .from('users')
         .insert([{
-          email: form.email.toLowerCase().trim(),
-          name: form.name.trim(),
-          requested_role: form.requestedRole,
-          notes: form.notes.trim() || null,
-          status: 'pending',
+            id: authData.user?.id, // Use the Auth UUID
+            email: form.email.toLowerCase().trim(),
+            name: form.name.trim(),
+            role: 'pending', // They can't log in until approved
         }])
 
-      if (pendingError) throw pendingError
+        if (userError && userError.code !== '23505') { // Ignore duplicate errors
+        console.error('Error creating user record:', userError)
+        }
+
+        // 5. Insert into pending_users for leader approval
+        const { error: pendingError } = await supabase
+        .from('pending_users')
+        .insert([{
+            email: form.email.toLowerCase().trim(),
+            name: form.name.trim(),
+            requested_role: form.requestedRole,
+            notes: form.notes.trim() || null,
+            status: 'pending',
+        }])
 
       // 5. Sign them back out — they can't use the app until leader approves
       await supabase.auth.signOut()

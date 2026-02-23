@@ -35,6 +35,12 @@ export default function LoginPage() {
         throw new Error('User not found in database. Please contact your administrator.')
       }
 
+      // Check if user is still pending approval
+      if (userData?.role === 'pending') {
+        await supabase.auth.signOut()
+        throw new Error('Your account is pending approval. Please wait for a church leader to approve your access.')
+      }
+
       // Redirect based on role
       if (userData?.role === 'warrior') {
         router.push('/warrior')

@@ -479,16 +479,28 @@ export default function LeaderDashboard() {
 
   const handleApproveUser = async (pending: PendingUser) => {
     if (!confirm(`Approve ${pending.name} as ${pending.requested_role.replace(/_/g, ' ')}?`)) return
+    
     try {
-      const { error: userError } = await supabase.from('users').insert([{ email: pending.email, name: pending.name, role: pending.requested_role }])
-      if (userError) {
-        await supabase.from('users').update({ role: pending.requested_role, name: pending.name }).eq('email', pending.email)
-      }
-      await supabase.from('pending_users').update({ status: 'approved' }).eq('id', pending.id)
-      alert(`${pending.name} has been approved. They can now log in.`)
+      // Simply update the role from 'pending' to their requested role
+      const { error: updateError } = await supabase
+        .from('users')
+        .update({ role: pending.requested_role })
+        .eq('email', pending.email)
+
+      if (updateError) throw updateError
+
+      // Mark as approved in pending_users
+      await supabase
+        .from('pending_users')
+        .update({ status: 'approved' })
+        .eq('id', pending.id)
+      
+      alert(`✅ ${pending.name} has been approved as ${pending.requested_role.replace(/_/g, ' ')}!\n\nThey can now log in.`)
       loadPendingUsers()
+      
     } catch (err: any) {
-      alert(`Error approving user: ${err.message}`)
+      console.error('Approval error:', err)
+      alert(`❌ Error: ${err.message}`)
     }
   }
 
