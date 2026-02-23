@@ -29,7 +29,7 @@ export default function LoginPage() {
         .from('users')
         .select('role, name')
         .eq('email', email)
-        .single()
+        .maybeSingle()
 
       if (userError) {
         throw new Error('User not found in database. Please contact your administrator.')

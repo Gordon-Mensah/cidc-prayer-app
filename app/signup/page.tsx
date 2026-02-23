@@ -83,18 +83,20 @@ export default function SignupPage() {
       if (authError) throw authError
 
       // 4. Create user record immediately (but with 'pending' role)
-        const { error: userError } = await supabase
+      const { error: userError } = await supabase
         .from('users')
         .insert([{
-            id: authData.user?.id, // Use the Auth UUID
+            id: authData.user?.id,
             email: form.email.toLowerCase().trim(),
             name: form.name.trim(),
-            role: 'pending', // They can't log in until approved
+            role: 'pending',
         }])
 
-        if (userError && userError.code !== '23505') { // Ignore duplicate errors
-        console.error('Error creating user record:', userError)
-        }
+     if (userError && userError.code !== '23505') {
+       // Clean up the auth account since user row failed
+       await supabase.auth.signOut()
+       throw new Error('Failed to create user record. Please try again.')
+      }
 
         // 5. Insert into pending_users for leader approval
         const { error: pendingError } = await supabase
